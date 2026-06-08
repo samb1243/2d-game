@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Gem Rush</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ── HUD ── -->
+  <div id="hud">
+    <div class="hud-player" id="hud-p1">
+      <span class="hud-name" id="h1-name">Player 1</span>
+      <span class="hud-gems" id="h1-gems">0 / 5 gems</span>
+      <span class="hud-wins" id="h1-wins">0 wins</span>
+    </div>
+    <div id="hud-center">
+      <div id="timer-display">0.0s</div>
+      <div id="diff-badge">Medium</div>
+    </div>
+    <div class="hud-player" id="hud-p2" style="align-items:flex-end">
+      <span class="hud-name" id="h2-name">Player 2</span>
+      <span class="hud-gems" id="h2-gems">0 / 5 gems</span>
+      <span class="hud-wins" id="h2-wins">0 wins</span>
+    </div>
+  </div>
+
+  <!-- ── Game canvas ── -->
+  <canvas id="game" width="960" height="540"></canvas>
+  <div id="game-controls" class="hidden">
+    <button class="game-ctrl-btn" id="restart-btn">↺ Restart</button>
+    <button class="game-ctrl-btn" id="menu-btn">⌂ Main Menu</button>
+    <button class="game-ctrl-btn" id="debug-btn">⬡ AI Debug</button>
+  </div>
+
+  <!-- ── Setup overlay ── -->
+  <div class="overlay" id="setup-overlay">
+    <div id="setup-title">GEM RUSH</div>
+    <div id="setup-sub">COLLECT ALL GEMS · REACH THE FLAG · RACE TO WIN</div>
+
+    <div id="setup-grid">
+
+      <!-- Player 1 -->
+      <div class="player-card p1-card">
+        <div class="card-title" style="color:#4af">Player 1 <span class="card-sub">· WASD</span></div>
+        <div>
+          <div class="field-label">NAME</div>
+          <input class="name-input" id="p1-name" type="text" value="Player 1" maxlength="12" spellcheck="false">
+        </div>
+        <div>
+          <div class="field-label">COLOR</div>
+          <div class="color-row" id="p1-colors"></div>
+        </div>
+        <div>
+          <div class="field-label">HAT</div>
+          <div class="hat-row" id="p1-hats"></div>
+        </div>
+      </div>
+
+      <!-- Difficulty -->
+      <div id="diff-card">
+        <h3>DIFFICULTY</h3>
+        <button class="diff-btn diff-easy"            data-d="easy">Easy</button>
+        <button class="diff-btn diff-medium selected" data-d="medium">Medium</button>
+        <button class="diff-btn diff-hard"            data-d="hard">Hard</button>
+        <button class="diff-btn diff-custom"          data-d="custom">Custom</button>
+        <div id="diff-desc">Standard speed &amp; hazards</div>
+        <div id="custom-panel" class="hidden">
+          <div class="cp-row">
+            <span class="cp-lbl">SPEED</span>
+            <input type="range" id="c-speed" min="1" max="5" step="1" value="3">
+            <span id="c-speed-val">3</span>
+          </div>
+          <div class="cp-row">
+            <span class="cp-lbl">GEMS</span>
+            <div class="cp-stepper">
+              <button id="c-gems-dec">−</button>
+              <span id="c-gems-val">5</span>
+              <button id="c-gems-inc">+</button>
+            </div>
+          </div>
+          <div class="cp-stack">
+            <span class="cp-lbl">SPIKES</span>
+            <div class="cp-obs">
+              <button class="obs-btn" data-o="none">None</button>
+              <button class="obs-btn selected" data-o="normal">Normal</button>
+              <button class="obs-btn" data-o="heavy">Heavy</button>
+            </div>
+          </div>
+        </div>
+        <div id="moving-toggle-row">
+          <span class="toggle-label">Moving Blocks</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="moving-toggle" checked>
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Player 2 -->
+      <div class="player-card p2-card">
+        <div class="card-title" style="color:#f84">Player 2 <span class="card-sub" id="p2-sub">· Arrow Keys</span></div>
+        <div>
+          <div class="field-label">NAME</div>
+          <input class="name-input" id="p2-name" type="text" value="Player 2" maxlength="12" spellcheck="false">
+        </div>
+        <div>
+          <div class="field-label">COLOR</div>
+          <div class="color-row" id="p2-colors"></div>
+        </div>
+        <div>
+          <div class="field-label">HAT</div>
+          <div class="hat-row" id="p2-hats"></div>
+        </div>
+        <div>
+          <div class="field-label">MODE</div>
+          <div class="ai-row">
+            <span class="ai-lbl">AI Opponent</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="ai-toggle">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <button id="start-btn">START GAME</button>
+  </div>
+
+  <!-- ── Win overlay ── -->
+  <div class="overlay hidden" id="win-overlay">
+    <div id="win-title">Player 1 Wins!</div>
+    <div id="win-time">Time: 0.00s</div>
+    <div id="scoreboard">
+      <h3>SCOREBOARD</h3>
+      <div class="sb-row">
+        <div><div class="sb-name" id="sb1-name">Player 1</div><div class="sb-label">WINS</div></div>
+        <div class="sb-wins" id="sb1-wins">0</div>
+      </div>
+      <div class="sb-row">
+        <div><div class="sb-name" id="sb2-name">Player 2</div><div class="sb-label">WINS</div></div>
+        <div class="sb-wins" id="sb2-wins">0</div>
+      </div>
+    </div>
+    <div class="win-btns">
+      <button class="win-btn primary" id="again-btn">Play Again</button>
+      <button class="win-btn"         id="settings-btn">Change Settings</button>
+    </div>
+  </div>
+
+  <!-- Scripts loaded in dependency order -->
+  <script src="js/constants.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/levelgen.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/draw.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+
+</body>
+</html>
