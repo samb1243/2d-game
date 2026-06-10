@@ -1,6 +1,23 @@
 function generateLevel(diffKey) {
   const ri = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1)) + lo;
 
+  // Physics-derived reachability for the active settings — the level generator
+  // and the AI (ai.js) consult the SAME model, so anything we mark "reachable"
+  // is genuinely jumpable by the character (see jump.js).
+  const M = buildJumpModel(DIFF[diffKey]);
+
+  // Build until we get a layout where the flag and every gem sit on a platform
+  // that is provably reachable from the floor. ensureReachability almost always
+  // succeeds on the first try; the retry loop is a guarantee, not a hot path.
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const level = buildLevel(diffKey, M, ri);
+    if (level) return level;
+  }
+  // Last resort: a trivially solvable fallback (all gems + flag on the floor).
+  return buildFallbackLevel(diffKey, ri);
+}
+
+function buildLevel(diffKey, M, ri) {
   // Empty grid
   const grid = Array.from({ length: MAP_H }, () => new Array(MAP_W).fill(0));
 
@@ -24,26 +41,49 @@ function generateLevel(diffKey) {
   buildTier(allPlats,  6, ri(2, 4), 1, MAP_W - 4, ri);
 
   // Add stepping stones so every platform is reachable from the floor.
-  ensureReachability(allPlats, ri);
+  ensureReachability(allPlats, ri, M);
+
+  // Which platforms are reachable from the floor with the current physics?
+  const reach = computeReachable(allPlats, M);
+  const reachable = allPlats.filter((_, i) => reach[i]);
+
+  // Flag — pick a reachable elevated platform (row ≤ 10, i.e. T2 or above).
+  const elevated = reachable.filter(p => p.row <= 10);
+  if (elevated.length === 0) return null;      // nowhere worthwhile to plant it — retry
+  const flagPlat = elevated[ri(0, elevated.length - 1)];
+  const flagPos  = { col: flagPlat.col + Math.floor(flagPlat.w / 2), row: flagPlat.row };
 
   // Paint platforms onto the grid.
   for (const p of allPlats)
     for (let c = p.col; c < p.col + p.w && c < MAP_W; c++)
       if (p.row >= 3 && p.row < 13) grid[p.row][c] = 1;
 
-  // Flag — pick any elevated platform (row ≤ 10, i.e. T2 or above).
-  const elevated  = allPlats.filter(p => p.row <= 10);
-  const flagCands = elevated.length > 0 ? elevated : allPlats;
-  const flagPlat  = flagCands[ri(0, flagCands.length - 1)];
-  const flagPos   = { col: flagPlat.col + Math.floor(flagPlat.w / 2), row: flagPlat.row };
-
-  // Gems
-  const gemPos = pickGems(allPlats, flagPlat, GEM_COUNT, grid, ri);
+  // Gems — only on reachable platforms, so collecting them is always possible.
+  const gemPos = pickGems(reachable, flagPlat, GEM_COUNT, grid, ri);
+  if (gemPos.length < GEM_COUNT) return null;  // not enough reachable perches — retry
 
   // Moving platforms — scan the painted grid for empty horizontal runs.
   const platDefs = buildMovingPlats(grid, diffKey, ri);
 
   return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs };
+}
+
+// Guaranteed-solvable fallback used only if 80 random attempts all fail: a
+// single low platform plus floor-level gems and flag. Effectively never hit.
+function buildFallbackLevel(diffKey, ri) {
+  const grid = Array.from({ length: MAP_H }, () => new Array(MAP_W).fill(0));
+  for (let r = 14; r < MAP_H; r++)
+    for (let c = 0; c < MAP_W; c++) grid[r][c] = 1;
+  for (let c = 13; c <= 16; c++) grid[12][c] = 1;          // one reachable perch
+
+  const flagPos = { col: 14, row: 12 };
+  const gemPos  = [];
+  const cols    = [6, 10, 19, 23, 14];
+  for (let i = 0; i < GEM_COUNT; i++) {
+    const c = cols[i % cols.length];
+    gemPos.push({ col: c, row: i % cols.length === 4 ? 11 : 13 });
+  }
+  return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs: [] };
 }
 
 // ── Tier builder ───────────────────────────────────────────────────────────
@@ -81,10 +121,10 @@ function platOverlap(list, col, row, w) {
 // ── Reachability ───────────────────────────────────────────────────────────
 
 // Returns a Uint8Array marking which platforms are reachable from the ground
-// floor (row 14) via jumps. Seed: row 12 platforms are one jump from the floor.
-// Propagation: A is reachable if a reachable B sits 1–3 rows below it with
-// horizontal gap ≤ 5 − dRow (matches the AI jump-graph rule).
-function computeReachable(allPlats) {
+// floor (row 14) via jumps the character can actually make. Seed: row-12
+// platforms sit one 2-tile jump above the full-width floor. Propagation: A is
+// reachable if a reachable B sits below it within physics jump range.
+function computeReachable(allPlats, M) {
   const n     = allPlats.length;
   const reach = new Uint8Array(n);
   for (let i = 0; i < n; i++)
@@ -98,11 +138,11 @@ function computeReachable(allPlats) {
       const a = allPlats[i];
       for (let j = 0; j < n; j++) {
         if (!reach[j]) continue;
-        const b    = allPlats[j];
-        const dr   = b.row - a.row;
-        if (dr < 1 || dr > 3) continue;
+        const b  = allPlats[j];
+        const dr = b.row - a.row;           // b below a → jump up from b to a
+        if (dr < 1) continue;
         const hGap = Math.max(0, a.col - b.col - b.w, b.col - a.col - a.w);
-        if (hGap <= 5 - dr) { reach[i] = 1; changed = true; break; }
+        if (M.canJumpUp(dr, hGap)) { reach[i] = 1; changed = true; break; }
       }
     }
   }
@@ -110,11 +150,15 @@ function computeReachable(allPlats) {
 }
 
 // Inserts stepping stones so that every platform has a jump path to the floor.
-// Works bottom-up (worst = closest unreachable to floor) so each stone can
-// immediately serve as a bridge for platforms above it.
-function ensureReachability(allPlats, ri) {
+// Works top-down by worst case (the unreachable platform closest to the floor)
+// so each stone can immediately serve as a bridge for platforms above it. Each
+// stone is placed within verified jump range of the platform it supports.
+function ensureReachability(allPlats, ri, M) {
+  const dr        = 2;                            // tiers are 2 rows apart
+  const maxGap    = Math.max(0, M.maxGapTilesForRise(dr));
+
   for (let pass = 0; pass < 80; pass++) {
-    const reach = computeReachable(allPlats);
+    const reach = computeReachable(allPlats, M);
 
     let worstIdx = -1, worstRow = -1;
     for (let i = 0; i < allPlats.length; i++)
@@ -122,31 +166,31 @@ function ensureReachability(allPlats, ri) {
         { worstRow = allPlats[i].row; worstIdx = i; }
     if (worstIdx === -1) break;
 
-    const p = allPlats[worstIdx];
-    for (let attempt = 0; attempt < 60; attempt++) {
-      const dr   = 2;
-      const sRow = p.row + dr;
-      if (sRow > 12) continue;
+    const p    = allPlats[worstIdx];
+    const sRow = p.row + dr;
+    if (sRow > 12) continue;                      // can't drop a stone onto the floor band
 
-      const maxH = 5 - dr - 1;
-      const side = Math.random() < 0.5 ? 1 : -1;
-      const hOff = ri(0, maxH) * side;
+    for (let attempt = 0; attempt < 80; attempt++) {
       const sW   = ri(2, 3);
-      const sCol = Math.max(1, Math.min(MAP_W - sW - 1,
-        p.col + Math.floor(p.w / 2) - Math.floor(sW / 2) + hOff));
+      // Search a window wide enough to cover the model's reach plus both widths,
+      // then accept only placements whose actual edge-gap is jumpable.
+      const span = maxGap + Math.max(p.w, sW) + 1;
+      const sCol = Math.max(1, Math.min(MAP_W - sW - 1, p.col + ri(-span, span)));
 
-      if (!platOverlap(allPlats, sCol, sRow, sW)) {
-        allPlats.push({ col: sCol, row: sRow, w: sW, main: false });
-        break;
-      }
+      if (platOverlap(allPlats, sCol, sRow, sW)) continue;
+      const edgeGap = Math.max(0, p.col - (sCol + sW - 1) - 1, sCol - (p.col + p.w - 1) - 1);
+      if (!M.canJumpUp(dr, edgeGap)) continue;
+
+      allPlats.push({ col: sCol, row: sRow, w: sW, main: false });
+      break;
     }
   }
 }
 
 // ── Gem placement ──────────────────────────────────────────────────────────
 
-function pickGems(allPlats, flagPlat, count, grid, ri) {
-  const eligible = allPlats.filter(p =>
+function pickGems(candidatePlats, flagPlat, count, grid, ri) {
+  const eligible = candidatePlats.filter(p =>
     !(p.col <= flagPlat.col && flagPlat.col < p.col + p.w && p.row === flagPlat.row)
   );
   for (let i = eligible.length - 1; i > 0; i--) {

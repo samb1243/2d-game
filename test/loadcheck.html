@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>load check</title></head>
+<body>
+  <canvas id="game" width="960" height="540"></canvas>
+  <pre id="out">running</pre>
+  <!-- Minimal stubs for the DOM elements ui.js / main.js touch. -->
+  <div id="timer-display"></div>
+  <script>
+    window.__errors = [];
+    window.onerror = (m, s, l, c) => { window.__errors.push(m + ' @' + l + ':' + c); };
+  </script>
+  <!-- Real game scripts, including draw.js (AI debug overlay reads AI state). -->
+  <script src="../js/constants.js"></script>
+  <script src="../js/jump.js"></script>
+  <script src="../js/state.js"></script>
+  <script src="../js/levelgen.js"></script>
+  <script src="../js/ai.js"></script>
+  <script src="../js/physics.js"></script>
+  <script src="../js/draw.js"></script>
+  <script>
+    function refreshHUD(){} function endGame(){}
+    function buildSetupUI(){} function syncSetupUI(){}
+  </script>
+  <script src="../js/main.js"></script>
+  <script>
+  (function () {
+    const out = document.getElementById('out');
+    try {
+      aiOpponent = true; diff = 'medium'; movingBlocks = true; showAIDebug = true;
+      initGame();
+      // Run real loop bodies (update + every draw, including drawAIDebug).
+      for (let f = 0; f < 400; f++) {
+        animTick++;
+        updatePlatforms();
+        players.forEach(updatePlayer);
+        ctx.clearRect(0, 0, W, H);
+        drawBG(); drawTiles(); drawPlatforms(); drawFlag(); drawGems();
+        players.forEach(drawPlayer);
+        players.forEach(drawAIDebug);
+        players.forEach(drawDeathNotice);
+      }
+      out.textContent = window.__errors.length
+        ? 'ERRORS: ' + window.__errors.join(' | ')
+        : 'OK: initGame + 400 frames (with AI debug draw) ran clean. aiSegs=' + aiSegs.length;
+    } catch (e) {
+      out.textContent = 'EXCEPTION: ' + (e && e.stack ? e.stack : e);
+    }
+  })();
+  </script>
+</body></html>

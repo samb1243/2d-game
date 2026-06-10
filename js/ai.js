@@ -12,11 +12,18 @@ let aiPresetIdx = 0;
 // ── State ──────────────────────────────────────────────────────────────────
 let aiSegs = [];  // walkable surface segments { row, minCol, maxCol }
 let aiAdj  = [];  // adjacency list — aiAdj[i]: segment indices reachable from i
+let aiJumpModel = null;  // physics-derived jump reachability for the active difficulty
 
 // ── Graph building ─────────────────────────────────────────────────────────
 
 function buildAIGraph() {
   aiSegs = [];
+
+  // Physics-derived reachability — every edge below is gated by what the
+  // character can actually do with the current movement settings, so the AI
+  // never plans a jump it can't make (see jump.js).
+  const M = buildJumpModel(DIFF[diff]);
+  aiJumpModel = M;
 
   // A surface tile is solid with open space directly above.
   for (let row = 1; row < MAP_H; row++) {
@@ -38,7 +45,7 @@ function buildAIGraph() {
       const dRow = a.row - b.row;  // positive → b is higher on screen
       const hGap = Math.max(0, b.minCol - a.maxCol - 1, a.minCol - b.maxCol - 1);
 
-      if (dRow === 0 && hGap <= 5) {
+      if (dRow === 0 && (hGap === 0 || M.canCross(hGap))) {
         // Same level: connect if the body-height corridor between them is clear.
         const lo = Math.min(a.maxCol, b.maxCol) + 1;
         const hi = Math.max(a.minCol, b.minCol) - 1;
@@ -47,14 +54,14 @@ function buildAIGraph() {
           if (tileAt(c, a.row - 1) === 1) ok = false;
         if (ok) aiAdj[i].push({ idx: j, moveType: hGap === 0 ? 'walk' : 'jump' });
 
-      } else if (dRow > 0 && dRow <= 2 && hGap <= 5 - dRow) {
+      } else if (dRow > 0 && M.canJumpUp(dRow, hGap)) {
         // Jump up: reject if a 2-tile wall blocks the face of the jump.
         const dir     = b.minCol > a.maxCol ? 1 : b.maxCol < a.minCol ? -1 : 0;
         const faceCol = dir > 0 ? a.maxCol + 1 : dir < 0 ? a.minCol - 1 : -1;
         if (faceCol < 0 || !(tileAt(faceCol, a.row - 1) === 1 && tileAt(faceCol, a.row - 2) === 1))
           aiAdj[i].push({ idx: j, moveType: 'jump' });
 
-      } else if (dRow < 0 && hGap <= 5) {
+      } else if (dRow < 0 && M.canDrop(-dRow, hGap)) {
         // Drop down.
         const dir = b.minCol > a.maxCol ? 1 : b.maxCol < a.minCol ? -1 : 0;
         if (dir !== 0) {
@@ -103,7 +110,11 @@ function getTargetSegIdx(tx, ty) {
 }
 
 // Standard BFS — returns the full segment-index path, or null if unreachable.
-function bfsPath(startIdx, endIdx) {
+// `banned` (optional) maps "u>v" edge keys to an expiry tick; an edge is skipped
+// while animTick has not yet passed that expiry, letting the AI route around a
+// hop it has repeatedly failed to execute.
+function bfsPath(startIdx, endIdx, banned) {
+  if (startIdx < 0 || endIdx < 0) return null;
   if (startIdx === endIdx) return [startIdx];
   const parent = new Int32Array(aiSegs.length).fill(-1);
   const seen   = new Uint8Array(aiSegs.length);
@@ -115,6 +126,7 @@ function bfsPath(startIdx, endIdx) {
     if (u === endIdx) break;
     for (const { idx: v } of aiAdj[u]) {
       if (seen[v]) continue;
+      if (banned && banned[u + '>' + v] > animTick) continue;
       seen[v] = 1; parent[v] = u; q.push(v);
     }
   }
@@ -124,267 +136,313 @@ function bfsPath(startIdx, endIdx) {
   return path;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── AI locomotion ────────────────────────────────────────────────────────────
+// The graph above decides which hops are physically possible; this section
+// executes them reliably. Core ideas:
+//   • follow a BFS path one hop at a time;
+//   • take off from a platform edge WITH a running start (matches the jump
+//     model in jump.js — that's the speed it assumed was reachable);
+//   • while rising toward a higher platform, hold at its near face until the
+//     feet clear its top, then slip on — so the AI lands instead of bonking
+//     the side or the underside;
+//   • if a hop can't be completed in time, ban that edge briefly and reroute,
+//     so a single awkward jump can never wedge the AI forever.
 
-function hasFloorAt(col, row) {
-  return tileAt(col, row) === 1;
+const AI_HOP_BAN     = 240;   // ticks an un-executable hop edge stays banned
+const AI_GEM_SKIP    = 260;   // ticks stuck on one gem → shelve it, grab another
+const AI_STALL_RESET = 600;   // ticks of zero progress → clear all bans & retarget
+
+function aiInit(p) {
+  if (p.aiBanned) return;
+  p.aiBanned = {};
+  p.aiGemSkip = {};
+  p.aiGemIdx = -1;
+  p.aiHopFrom = -1;
+  p.aiHopTo = null;
+  p.aiHopDeadline = 0;
+  p.aiLastProgressTick = 0;
+  p.aiLastGems = 0;
+  p.aiCoyote = 0;
+  p.aiLandX = null; p.aiFaceX = null; p.aiJumpDir = 0; p.aiTargetTopY = null;
 }
 
-// Waypoint at the centre of a segment at standing height.
-function segWaypoint(s) {
-  return { x: (s.minCol + s.maxCol + 1) / 2 * TILE, y: (s.row - 1) * TILE };
+function aiCeilingBlocked(p) {
+  return !aiCeilingClearAt(p, p.x);
 }
 
-// Neighbour of pSeg with the most columns that have ≥2 clear rows above —
-// used to steer toward jump-able space when a ceiling blocks a jump.
-function bestOpenNeighbour(pSeg) {
-  let bestNi = -1, bestOpen = -1;
-  for (const { idx: ni } of aiAdj[pSeg]) {
-    const s = aiSegs[ni];
-    let open = 0;
-    for (let c = s.minCol; c <= s.maxCol; c++)
-      if (tileAt(c, s.row - 2) !== 1 && tileAt(c, s.row - 3) !== 1) open++;
-    if (open > bestOpen) { bestOpen = open; bestNi = ni; }
-  }
-  return bestNi;
+// Is the 2-tile headroom above clear for a body whose left edge is at `px`?
+function aiCeilingClearAt(p, px) {
+  const c0 = Math.floor(px / TILE), c1 = Math.floor((px + p.w - 1) / TILE);
+  const r0 = Math.floor(p.y / TILE);
+  return !(tileAt(c0, r0 - 1) === 1 || tileAt(c1, r0 - 1) === 1 ||
+           tileAt(c0, r0 - 2) === 1 || tileAt(c1, r0 - 2) === 1);
 }
 
-// ── Target selection ────────────────────────────────────────────────────────
-
-function pickAITarget(p) {
-  if (p.gemsCollected < GEM_COUNT) {
-    const cy = p.y + p.h / 2;
-    let best = null, bestCost = Infinity;
-    for (const g of gems) {
-      if (g.collected[p.id]) continue;
-      const hdist = Math.abs(g.x - (p.x + p.w / 2));
-      const vdist = Math.abs(g.y - cy);
-      const cost  = hdist + vdist * (g.y < cy ? 2.2 : 1.0);
-      if (cost < bestCost) { bestCost = cost; best = { x: g.x, y: g.y }; }
-    }
-    return best;
-  }
-  return { x: flagPos.col * TILE + TILE / 2, y: (flagPos.row - 1) * TILE };
+// Is there a solid surface (tile or moving platform) right under the feet?
+// A player resting on flat ground sits exactly on a tile boundary, so the
+// engine flickers p.onGround on/off every frame; this lets the AI treat itself
+// as grounded on the "off" frames too, instead of stuttering into air-steering.
+function aiGroundBelow(p) {
+  if (p.onPlatform) return true;
+  const feet = p.y + p.h;
+  const c0   = Math.floor(p.x / TILE), c1 = Math.floor((p.x + p.w - 1) / TILE);
+  const r    = Math.floor((feet + 3) / TILE);
+  if (feet < r * TILE - 5 || feet > r * TILE + 4) return false;
+  return tileAt(c0, r) === 1 || tileAt(c1, r) === 1;
 }
 
-// ── Waypoint planning ───────────────────────────────────────────────────────
-
-// Three clean cases:
-//   1. BFS finds a path  → commit to the first hop
-//   2. No graph path     → walk off the nearest valid edge to reach the floor
-//   3. Already on target → walk straight to it
-function planWaypoint(p, target) {
-  const pSeg = getPlayerSegIdx(p);
-  if (pSeg < 0) return -1;  // momentarily off a segment — keep current plan
-
-  const tSeg = getTargetSegIdx(target.x, target.y);
-
-  if (tSeg >= 0 && pSeg !== tSeg) {
-    const path = bfsPath(pSeg, tSeg);
-    if (path && path.length > 1) {
-      const edge  = aiAdj[pSeg].find(e => e.idx === path[1]);
-      p.aiPath     = path;
-      p.aiMoveType = edge ? edge.moveType : 'walk';
-      const ns    = aiSegs[path[1]];
-      const seg   = aiSegs[pSeg];
-      const nsCx  = (ns.minCol + ns.maxCol + 1) / 2 * TILE;
-      const segCx = (seg.minCol + seg.maxCol + 1) / 2 * TILE;
-
-      if (p.aiMoveType === 'drop') {
-        const dropDir = (edge && edge.dropDir != null) ? edge.dropDir : (nsCx >= segCx ? 1 : -1);
-        p.aiWaypoint  = {
-          x: dropDir > 0
-            ? Math.min(Math.max(nsCx, (seg.maxCol + 0.5) * TILE), (MAP_W - 1) * TILE)
-            : Math.max(Math.min(nsCx, (seg.minCol - 0.5) * TILE), 0),
-          y: (ns.row - 1) * TILE,
-        };
-      } else {
-        p.aiWaypoint = segWaypoint(ns);
-      }
-    } else {
-      // Platform is unreachable via the graph (isolated). Walk off whichever
-      // edge avoids the map boundary so the AI drops to the floor and replans.
-      p.aiPath     = [];
-      p.aiMoveType = 'drop';
-      const seg = aiSegs[pSeg];
-      let dir   = target.x >= p.x + p.w / 2 ? 1 : -1;
-      if (dir < 0 && (seg.minCol - 1.5) * TILE < 0)             dir = 1;
-      else if (dir > 0 && (seg.maxCol + 1.5) * TILE > MAP_W * TILE) dir = -1;
-      p.aiWaypoint = {
-        x: dir > 0
-          ? Math.min((seg.maxCol + 1.5) * TILE, (MAP_W - 1) * TILE)
-          : Math.max((seg.minCol - 1.5) * TILE, 0),
-        y: target.y,
-      };
-    }
-  } else {
-    // Already on the target segment, or the target has no segment — walk straight to it.
-    p.aiPath     = [];
-    p.aiMoveType = 'walk';
-    p.aiWaypoint = target;
+// Pick the segment + world point the AI should head for: the nearest reachable
+// uncollected gem (sticky — it keeps the current gem while it stays reachable),
+// or the flag once every gem is in hand.
+function aiChooseGoal(p, curSeg) {
+  if (p.gemsCollected >= GEM_COUNT) {
+    const fx = flagPos.col * TILE + TILE / 2, fy = (flagPos.row - 1) * TILE;
+    return { seg: getTargetSegIdx(fx, fy), x: fx, y: fy };
   }
 
-  return pSeg;
-}
-
-// Steer toward a spot with ≥2 clear rows of headroom so a jump can succeed.
-function seekOpenSpace(p, pSeg) {
-  if (pSeg < 0) pSeg = getPlayerSegIdx(p);
-  if (pSeg < 0) return;
-  const seg = aiSegs[pSeg];
-
-  for (let c = seg.minCol; c <= seg.maxCol; c++) {
-    if (tileAt(c, seg.row - 2) !== 1 && tileAt(c, seg.row - 3) !== 1) {
-      p.aiWaypoint = { x: (c + 0.5) * TILE, y: (seg.row - 1) * TILE };
-      return;
+  // Keep the current gem target while it is still uncollected and reachable.
+  if (p.aiGemIdx >= 0 && !(p.aiGemSkip[p.aiGemIdx] > animTick)) {
+    const g = gems[p.aiGemIdx];
+    if (g && !g.collected[p.id]) {
+      const s = getTargetSegIdx(g.x, g.y);
+      if (bfsPath(curSeg, s, p.aiBanned)) return { seg: s, x: g.x, y: g.y };
     }
   }
 
-  const ni = bestOpenNeighbour(pSeg);
-  if (ni >= 0) p.aiWaypoint = segWaypoint(aiSegs[ni]);
-}
-
-// ── Main AI input ───────────────────────────────────────────────────────────
-
-function applyAIInput(p, cfg) {
-  const target = pickAITarget(p);
-  if (!target) return;
-  p.aiTarget = target;
-
-  // ── Plan management ────────────────────────────────────────────────────────
-  // Replan whenever: the target moves, the AI lands on a new segment, there is
-  // no waypoint yet, or the per-hop deadline expires.
-  let pSeg = -1;
-  if (p.onGround) {
-    const curSeg      = getPlayerSegIdx(p);
-    const targetMoved = !p.aiPlanTarget
-      || Math.abs(p.aiPlanTarget.x - target.x) > 2
-      || Math.abs(p.aiPlanTarget.y - target.y) > 2;
-    const segArrived  = curSeg >= 0 && curSeg !== p.aiPlanSeg;
-    const planExpired = p.aiWaypointDeadline > 0 && animTick > p.aiWaypointDeadline;
-
-    if (targetMoved || segArrived || !p.aiWaypoint || planExpired) {
-      pSeg = planWaypoint(p, target);
-      if (pSeg >= 0) {
-        p.aiPlanSeg    = pSeg;
-        p.aiPlanTarget = { x: target.x, y: target.y };
-        const wpt  = p.aiWaypoint;
-        const dist = wpt ? Math.hypot(wpt.x - (p.x + p.w / 2), wpt.y - p.y) : TILE * 6;
-        p.aiWaypointDeadline = animTick + Math.max(150, Math.ceil(dist / cfg.speed) * 3 + 60);
-      }
-    } else {
-      pSeg = curSeg;
+  // Otherwise choose the reachable gem with the fewest hops (then nearest),
+  // skipping any gem we've recently failed to collect (so we grab others first).
+  let bestSeg = -1, bestX = 0, bestY = 0, bestHops = 1e9, bestD = 1e9, bestIdx = -1;
+  for (let i = 0; i < gems.length; i++) {
+    const g = gems[i];
+    if (g.collected[p.id] || p.aiGemSkip[i] > animTick) continue;
+    const s = getTargetSegIdx(g.x, g.y);
+    const path = bfsPath(curSeg, s, p.aiBanned);
+    if (!path) continue;
+    const d = Math.abs(g.x - (p.x + p.w / 2)) + Math.abs(g.y - (p.y + p.h / 2));
+    if (path.length < bestHops || (path.length === bestHops && d < bestD)) {
+      bestHops = path.length; bestD = d; bestSeg = s; bestX = g.x; bestY = g.y; bestIdx = i;
     }
   }
+  if (bestSeg >= 0) { p.aiGemIdx = bestIdx; return { seg: bestSeg, x: bestX, y: bestY }; }
 
-  const waypoint = p.aiWaypoint || target;
+  // Nothing reachable — drop bans, then skips, and try once more.
+  if (Object.keys(p.aiBanned).length) { p.aiBanned = {}; return aiChooseGoal(p, curSeg); }
+  if (Object.keys(p.aiGemSkip).length) { p.aiGemSkip = {}; return aiChooseGoal(p, curSeg); }
+
+  // Truly nothing reachable (should not happen on a generated level): aim at the
+  // nearest gem regardless, and let the drive/jump fallback do its best.
+  let nx = p.x + p.w / 2, ny = p.y, nd = 1e9, ns = -1;
+  for (let i = 0; i < gems.length; i++) {
+    const g = gems[i]; if (g.collected[p.id]) continue;
+    const d = Math.abs(g.x - (p.x + p.w / 2)) + Math.abs(g.y - (p.y + p.h / 2));
+    if (d < nd) { nd = d; nx = g.x; ny = g.y; ns = getTargetSegIdx(g.x, g.y); }
+  }
+  return { seg: ns, x: nx, y: ny };
+}
+
+// Horizontal drive toward a target column, with an optional opportunistic jump
+// when the target sits above and we're roughly under it (used on the goal
+// segment and as a fallback when off the graph).
+function aiDriveToward(p, cfg, tx, ty, allowJump) {
+  p.aiWaypoint = { x: tx, y: ty };
+  const cx = p.x + p.w / 2, dx = tx - cx;
+  const vxt = Math.abs(dx) < 4 ? 0 : Math.sign(dx) * cfg.speed;
+  p.vx += (vxt - p.vx) * 0.6;
+  if (allowJump && ty != null && ty < p.y - TILE * 0.5 &&
+      Math.abs(dx) < TILE && !aiCeilingBlocked(p)) {
+    p.vy = cfg.jump; p.onGround = false;
+  }
+}
+
+// Execute one grounded hop from segment A to segment B.
+function aiDriveHop(p, cfg, A, B, moveType, edge) {
   const cx  = p.x + p.w / 2;
-  const dx  = waypoint.x - cx;
-  const dir = dx > 0 ? 1 : -1;
+  const bCx = (B.minCol + B.maxCol + 1) / 2 * TILE;
+  p.aiWaypoint = { x: bCx, y: (B.row - 1) * TILE };
+  p.aiLandX = Math.max((B.minCol + 0.4) * TILE, Math.min((B.maxCol + 0.6) * TILE, bCx));
 
-  // ── Stuck detection (no movement while waypoint is distant, or wall-pressed) ─
-  const dxMotion  = p.x - p.aiLastX;
-  const wallStuck = (p.x <= 0 && dir < 0) || (p.x >= MAP_W * TILE - p.w && dir > 0);
-  if ((Math.abs(dxMotion) < 0.5 && Math.abs(dx) > TILE) || wallStuck)
-    p.aiStuckTimer++;
-  else
-    p.aiStuckTimer = Math.max(0, p.aiStuckTimer - 2);
-  p.aiLastX = p.x;
-
-  // ── Mid-air: smooth steering toward waypoint ──────────────────────────────
-  if (!p.onGround) {
-    const c0    = Math.floor(p.x / TILE);
-    const c1    = Math.floor((p.x + p.w - 1) / TILE);
-    const r0    = Math.floor(p.y / TILE);
-    const r1    = Math.floor((p.y + p.h - 1) / TILE);
-    const front = dir > 0 ? c1 + 1 : c0 - 1;
-    if (!(tileAt(front, r0) === 1 || tileAt(front, r1) === 1)) {
-      const tgtAir = Math.abs(dx) > 8 ? dir * cfg.speed : 0;
-      p.vx += (tgtAir - p.vx) * 0.35;
-    }
+  if (moveType === 'walk') {
+    p.aiFaceX = null; p.aiTargetTopY = null; p.aiJumpDir = 0;
+    const dx = bCx - cx;
+    p.vx += ((Math.abs(dx) < 4 ? 0 : Math.sign(dx) * cfg.speed) - p.vx) * 0.6;
     return;
   }
 
-  // ── On ground: drive velocity toward waypoint ─────────────────────────────
-  // Drop mode always runs full speed so the AI doesn't stall at platform edges.
-  const tgtVx = p.aiMoveType === 'drop'
-    ? dir * cfg.speed
-    : Math.abs(dx) < 6 ? 0
-    : dir * cfg.speed * Math.min(1, Math.abs(dx) / TILE);
-  p.vx += (tgtVx - p.vx) * 0.6;
-
-  // ── Environment sensors ───────────────────────────────────────────────────
-  const col0     = Math.floor(p.x / TILE);
-  const col1     = Math.floor((p.x + p.w - 1) / TILE);
-  const row0     = Math.floor(p.y / TILE);
-  const row1     = Math.floor((p.y + p.h - 1) / TILE);
-  const floorRow = row1 + 1;
-  const frontCol = dir > 0 ? col1 + 1 : col0 - 1;
-
-  const wallAhead    = tileAt(frontCol, row0) === 1 || tileAt(frontCol, row1) === 1;
-  const ceilingAbove = tileAt(col0, row0 - 1) === 1 || tileAt(col0, row0 - 2) === 1 ||
-                       tileAt(col1, row0 - 1) === 1 || tileAt(col1, row0 - 2) === 1;
-
-  // Gap sensor: only look one tile ahead so the AI doesn't jump prematurely.
-  let gapAhead = false, canDrop = false;
-  if (!p.onPlatform && (p.aiMoveType === 'drop' || Math.abs(dx) > TILE * 0.5)) {
-    const c = dir > 0 ? col1 + 1 : col0 - 1;
-    if (!hasFloorAt(c, floorRow)) {
-      gapAhead = true;
-      canDrop  = waypoint.y > p.y + TILE;
-    }
+  if (moveType === 'drop') {
+    const dir = B.minCol > A.maxCol ? 1 : B.maxCol < A.minCol ? -1
+              : (edge && edge.dropDir) ? edge.dropDir : (bCx >= cx ? 1 : -1);
+    // Land on the part of B nearest the edge we drop off — NOT B's centre, which
+    // can sit back over A and make the air-steer haul us back onto A.
+    const nearCol = dir > 0 ? A.maxCol + 1 : A.minCol - 1;
+    const landCol = Math.max(B.minCol, Math.min(B.maxCol, nearCol));
+    p.aiLandX = (landCol + 0.5) * TILE;
+    p.aiFaceX = null; p.aiTargetTopY = null; p.aiJumpDir = dir;
+    // Commit: run at full speed in the drop direction until we walk clean off
+    // the edge. (Aiming at a fixed edge column parks the body half-on the
+    // platform — one foot still supported — and it never actually falls.)
+    p.vx += (dir * cfg.speed - p.vx) * 0.6;
+    return;
   }
 
-  const preset        = AI_PRESETS[aiPresetIdx];
-  const waypointAbove = waypoint.y < p.y - TILE && Math.abs(dx) < TILE * preset.aboveDx;
-
-  // Jump alignment depends on whether the target segment is to the side or above.
-  //
-  // Offset jump (new tier-based map): the target segment has no column overlap
-  // with the current segment. The AI must be near the platform EDGE facing the
-  // target before jumping — checking against the target segment's column range
-  // would require walking off the edge first (since target columns start where
-  // the current platform ends).
-  //
-  // Vertical/overlapping jump (e.g. floor → platform directly above): use the
-  // standard proximity check against the target segment's columns.
-  let jumpAligned = true;
-  if (p.aiMoveType === 'jump' && p.aiPath && p.aiPath.length > 1) {
-    const ns = aiSegs[p.aiPath[1]];
-    if (ns) {
-      if (pSeg >= 0) {
-        const seg = aiSegs[pSeg];
-        if (ns.minCol > seg.maxCol) {
-          // Target is entirely to the right — be within 1 tile of the right edge.
-          jumpAligned = col0 >= seg.maxCol - 1;
-        } else if (ns.maxCol < seg.minCol) {
-          // Target is entirely to the left — be within 1 tile of the left edge.
-          jumpAligned = col1 <= seg.minCol + 1;
-        } else {
-          // Target overlaps horizontally (e.g. floor → platform above) —
-          // standard check: be within 1 tile of target's column range.
-          jumpAligned = col1 >= ns.minCol - 1 && col0 <= ns.maxCol + 1;
-        }
-      } else {
-        jumpAligned = col1 >= ns.minCol - 1 && col0 <= ns.maxCol + 1;
-      }
-    }
+  // moveType === 'jump' (up or across). Take off from the column of A just
+  // outside B on the chosen side.
+  let dir;
+  if (B.minCol > A.maxCol) dir = 1;
+  else if (B.maxCol < A.minCol) dir = -1;
+  else {
+    const canLeft  = A.minCol <= B.minCol - 1;   // room to stand left of B
+    const canRight = A.maxCol >= B.maxCol + 1;   // room to stand right of B
+    dir = (canLeft && canRight) ? (bCx >= cx ? 1 : -1) : (canLeft ? 1 : -1);
   }
+  const toCol    = dir > 0 ? Math.min(A.maxCol, B.minCol - 1)
+                           : Math.max(A.minCol, B.maxCol + 1);
+  const adjacent = dir > 0 ? toCol === B.minCol - 1 : toCol === B.maxCol + 1;
+  p.aiFaceX      = dir > 0 ? B.minCol * TILE : (B.maxCol + 1) * TILE;
+  p.aiTargetTopY = B.row * TILE;
+  p.aiJumpDir    = dir;
 
-  const needsJump = !canDrop && jumpAligned && (wallAhead || gapAhead || waypointAbove);
-  const canJump   = p.aiMoveType === 'jump';
-
-  // ── Stuck recovery: invalidate the plan so the next grounded frame replans ─
-  if (p.aiStuckTimer >= preset.stuckAt) {
-    p.aiStuckTimer = 0;
-    p.aiPlanSeg    = -1;
-    if (!ceilingAbove) { p.vy = cfg.jump; p.onGround = false; }
-  } else if (needsJump && canJump) {
-    if (!ceilingAbove) {
-      p.vy       = cfg.jump;
-      p.onGround = false;
+  if (adjacent) {
+    // B is right beside (or above) the take-off column: stand fully clear of B
+    // and hop straight up, then air-steer slides us on once the feet clear B's
+    // top. Standing clear is essential — over the platform's column the ceiling
+    // check would (correctly) forbid the jump, so we drive to the clear column
+    // and launch the instant we arrive (no deceleration that could strand the
+    // body half-under B).
+    const standXpx = dir > 0 ? (toCol + 1) * TILE - p.w : toCol * TILE;  // target left-edge x
+    // Snap to the clear take-off column once we're within a step of it — the
+    // clear window can be ~1px wide, too narrow for the per-frame motion to land
+    // on exactly, so accepting a nearby frame and snapping is what makes it fire.
+    const near = Math.abs(p.x - standXpx) <= cfg.speed + 1;
+    if (near && aiCeilingClearAt(p, standXpx)) {
+      p.x = standXpx;                         // snap exactly clear of B
+      p.vy = cfg.jump; p.onGround = false; p.vx = 0;
     } else {
-      seekOpenSpace(p, pSeg);
+      const dx = (standXpx + p.w / 2) - cx;
+      p.vx += (Math.sign(dx) * cfg.speed - p.vx) * 0.6;
+    }
+  } else {
+    // Gap jump: leave A's edge with a full running start and arc across.
+    const boundary    = dir > 0 ? (toCol + 1) * TILE : toCol * TILE;
+    const leadingEdge = dir > 0 ? p.x + p.w : p.x;
+    const atEdge      = dir > 0 ? leadingEdge >= boundary - 1 : leadingEdge <= boundary + 1;
+    if (atEdge && !aiCeilingBlocked(p)) {
+      p.vy = cfg.jump; p.onGround = false; p.vx = dir * cfg.speed;
+    } else {
+      const aimX = dir > 0 ? boundary - p.w / 2 - 1 : boundary + p.w / 2 + 1;
+      const dx   = aimX - cx;
+      const vxt  = Math.abs(dx) < 3 ? dir * cfg.speed : Math.sign(dx) * cfg.speed;
+      p.vx += (vxt - p.vx) * 0.6;              // keep speed into the edge
     }
   }
+}
+
+// Airborne steering toward the current hop's landing point, holding at a higher
+// platform's near face until the feet clear its top.
+function aiDriveAir(p, cfg) {
+  const cx = p.x + p.w / 2;
+  const landX = p.aiLandX != null ? p.aiLandX : (p.aiWaypoint ? p.aiWaypoint.x : cx);
+  let vxt = Math.abs(landX - cx) < 4 ? 0 : Math.sign(landX - cx) * cfg.speed;
+
+  if (p.aiFaceX != null && p.aiTargetTopY != null && p.y + p.h > p.aiTargetTopY + 2) {
+    // Still below the target platform's top: don't drive into its side.
+    if (p.aiJumpDir > 0 && p.x + p.w >= p.aiFaceX) vxt = Math.min(vxt, 0);
+    if (p.aiJumpDir < 0 && p.x <= p.aiFaceX)        vxt = Math.max(vxt, 0);
+  }
+  p.vx += (vxt - p.vx) * 0.5;
+}
+
+// Frames allowed to complete a hop before it's treated as un-executable.
+function aiHopBudget(p, curSeg, Bn, cfg) {
+  if (Bn < 0) return 120;
+  const A = aiSegs[curSeg], B = aiSegs[Bn];
+  const bCx  = (B.minCol + B.maxCol + 1) / 2 * TILE;
+  const dist = Math.abs(bCx - (p.x + p.w / 2)) + Math.abs(A.row - B.row) * TILE + TILE;
+  return 70 + Math.ceil(dist / cfg.speed) * 3;
+}
+
+// Plan a fresh hop from the segment we just landed on: choose the goal, BFS a
+// route (avoiding banned edges), and commit to the first hop.
+function planFromSeg(p, cfg, curSeg) {
+  const goal = aiChooseGoal(p, curSeg);
+  p.aiTarget = { x: goal.x, y: goal.y };
+
+  let path = bfsPath(curSeg, goal.seg, p.aiBanned);
+  if (!path && Object.keys(p.aiBanned).length) { p.aiBanned = {}; path = bfsPath(curSeg, goal.seg); }
+  p.aiPath = path || [curSeg];
+
+  p.aiHopFrom = curSeg;
+  p.aiHopTo   = p.aiPath.length > 1 ? p.aiPath[1] : -1;
+  p.aiMoveType = p.aiHopTo >= 0
+    ? ((aiAdj[curSeg].find(e => e.idx === p.aiHopTo) || {}).moveType || 'walk')
+    : 'walk';
+  p.aiHopDeadline = animTick + aiHopBudget(p, curSeg, p.aiHopTo, cfg);
+}
+
+// ── Main AI input ───────────────────────────────────────────────────────────
+//
+// One hop is committed at a time and held until we land on a NEW segment. This
+// matters because while a foot is off a platform edge mid-manoeuvre the player's
+// centre column leaves every segment (getPlayerSegIdx → -1); re-planning then
+// would abandon the jump/drop and haul us back. Committing rides it out.
+
+function applyAIInput(p, cfg) {
+  aiInit(p);
+  if (!aiJumpModel) aiJumpModel = buildJumpModel(DIFF[diff]);
+
+  // Progress / stall tracking → escape hatches if something wedges us.
+  if (p.gemsCollected !== p.aiLastGems) { p.aiLastGems = p.gemsCollected; p.aiLastProgressTick = animTick; }
+  const stalled = animTick - p.aiLastProgressTick;
+  if (stalled > AI_GEM_SKIP && p.gemsCollected < GEM_COUNT && p.aiGemIdx >= 0) {
+    // Can't get this gem — shelve it briefly and fetch a different one.
+    p.aiGemSkip[p.aiGemIdx] = animTick + AI_GEM_SKIP * 2;
+    p.aiGemIdx = -1; p.aiHopFrom = -1; p.aiHopTo = null; p.aiLastProgressTick = animTick;
+  }
+  if (stalled > AI_STALL_RESET) {
+    p.aiBanned = {}; p.aiGemSkip = {}; p.aiGemIdx = -1; p.aiHopFrom = -1; p.aiHopTo = null; p.aiLastProgressTick = animTick;
+  }
+
+  // Grounded for control purposes when truly on the ground, or resting a hair
+  // above a surface during the engine's 1px boundary flicker (see aiGroundBelow).
+  const grounded = p.onGround || (p.vy >= 0 && p.vy <= cfg.gravity * 2 + 0.1 && aiGroundBelow(p));
+  if (!grounded) { aiDriveAir(p, cfg); return; }
+
+  const curSeg = getPlayerSegIdx(p);
+
+  // Landed on a real, different segment (or never planned): commit a new hop.
+  if (curSeg >= 0 && (curSeg !== p.aiHopFrom || p.aiHopTo == null)) {
+    // If a hop dropped us somewhere OTHER than its intended target, that edge is
+    // unreliable (e.g. a same-row jump that arcs up onto a platform above the
+    // target). Ban it so we approach from a different segment instead.
+    if (p.aiHopTo != null && p.aiHopTo >= 0 && curSeg !== p.aiHopTo && curSeg !== p.aiHopFrom)
+      p.aiBanned[p.aiHopFrom + '>' + p.aiHopTo] = animTick + AI_HOP_BAN;
+    planFromSeg(p, cfg, curSeg);
+  } else if (p.aiHopTo != null && p.aiHopTo >= 0 && animTick > p.aiHopDeadline) {
+    // Hop ran over its time budget — ban that edge and route around it.
+    p.aiBanned[p.aiHopFrom + '>' + p.aiHopTo] = animTick + AI_HOP_BAN;
+    if (curSeg >= 0) planFromSeg(p, cfg, curSeg);
+    else { p.aiHopFrom = -1; p.aiHopTo = null; }
+  }
+
+  // Off-graph with no committed hop (e.g. just landed on a moving platform):
+  // steer toward the goal and hop up if it sits above.
+  if (p.aiHopTo == null) {
+    const goal = aiChooseGoal(p, curSeg >= 0 ? curSeg : 0);
+    p.aiTarget = { x: goal.x, y: goal.y };
+    aiDriveToward(p, cfg, goal.x, goal.y, true);
+    return;
+  }
+
+  // On the goal segment: walk to the exact target (jump only if it's above).
+  if (p.aiHopTo < 0) {
+    const goal = aiChooseGoal(p, p.aiHopFrom);
+    p.aiTarget = { x: goal.x, y: goal.y };
+    p.aiMoveType = 'walk';
+    aiDriveToward(p, cfg, goal.x, goal.y, goal.y < p.y - TILE * 0.5);
+    return;
+  }
+
+  // Execute the committed hop.
+  const A = aiSegs[p.aiHopFrom], B = aiSegs[p.aiHopTo];
+  const edge = aiAdj[p.aiHopFrom].find(e => e.idx === p.aiHopTo);
+  aiDriveHop(p, cfg, A, B, p.aiMoveType, edge);
 }
