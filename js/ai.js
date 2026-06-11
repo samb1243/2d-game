@@ -17,49 +17,72 @@ let aiJumpModel = null;  // physics-derived jump reachability for the active dif
 // ── Graph building ─────────────────────────────────────────────────────────
 
 function buildAIGraph() {
-  aiSegs = [];
-
   // Physics-derived reachability — every edge below is gated by what the
   // character can actually do with the current movement settings, so the AI
   // never plans a jump it can't make (see jump.js).
   const M = buildJumpModel(activeCfg);
   aiJumpModel = M;
+  const g = buildSegGraph(tiles, M);
+  aiSegs = g.segs;
+  aiAdj  = g.adj;
+}
 
-  // A surface tile is solid with open space directly above.
+// Pure walkable-surface graph for a tile grid + jump model — the single source
+// of truth for "where can the character stand and which hops connect those
+// surfaces?". buildAIGraph() runs it on the live `tiles`; the level generator
+// (levelgen.js) runs it on a candidate grid to prove every gem + the flag stays
+// reachable after spikes are added. Returns { segs, adj }.
+function buildSegGraph(grid, M) {
+  const at = (c, r) =>
+    (c < 0 || c >= MAP_W || r < 0 || r >= MAP_H) ? 1 : grid[r][c];
+
+  const segs = [];
+
+  // A surface tile is solid with open space directly above AND no spike on it —
+  // a spike (tile 2) at head height kills, so the AI must never stand there. This
+  // splits a floor/platform into separate segments around any spike, so routes go
+  // over the spike via a same-row jump edge instead of walking into it.
   for (let row = 1; row < MAP_H; row++) {
     let start = -1;
     for (let col = 0; col <= MAP_W; col++) {
-      const surf = col < MAP_W && tiles[row][col] === 1 && tiles[row - 1][col] !== 1;
+      const surf = col < MAP_W && at(col, row) === 1 &&
+                   at(col, row - 1) !== 1 && at(col, row - 1) !== 2;
       if (surf && start < 0)   start = col;
-      if (!surf && start >= 0) { aiSegs.push({ row, minCol: start, maxCol: col - 1 }); start = -1; }
+      if (!surf && start >= 0) { segs.push({ row, minCol: start, maxCol: col - 1 }); start = -1; }
     }
   }
 
-  const n = aiSegs.length;
-  aiAdj = Array.from({ length: n }, () => []);
+  const n = segs.length;
+  const adj = Array.from({ length: n }, () => []);
 
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       if (i === j) continue;
-      const a = aiSegs[i], b = aiSegs[j];
+      const a = segs[i], b = segs[j];
       const dRow = a.row - b.row;  // positive → b is higher on screen
       const hGap = Math.max(0, b.minCol - a.maxCol - 1, a.minCol - b.maxCol - 1);
 
       if (dRow === 0 && (hGap === 0 || M.canCross(hGap))) {
-        // Same level: connect if the body-height corridor between them is clear.
-        const lo = Math.min(a.maxCol, b.maxCol) + 1;
-        const hi = Math.max(a.minCol, b.minCol) - 1;
+        // Same level: connect if the corridor between them is clear. A flat cross
+        // is a full-height hop whose arc rises ~2 tiles, peaking near the take-off
+        // and landing edges (especially at low speed, where the arc is steep), so
+        // require clear sky at head height (row-1) AND two rows up (row-2) across
+        // the gap PLUS one column into each segment — otherwise the hop lands ON an
+        // overhead platform instead of crossing, stranding the body off its edge.
+        // This also keeps placeSpikes from carving a floor notch under a platform.
+        const lo = Math.min(a.maxCol, b.maxCol);       // take-off edge col
+        const hi = Math.max(a.minCol, b.minCol);       // landing edge col
         let ok = true;
         for (let c = lo; c <= hi && ok; c++)
-          if (tileAt(c, a.row - 1) === 1) ok = false;
-        if (ok) aiAdj[i].push({ idx: j, moveType: hGap === 0 ? 'walk' : 'jump' });
+          if (at(c, a.row - 1) === 1 || at(c, a.row - 2) === 1) ok = false;
+        if (ok) adj[i].push({ idx: j, moveType: hGap === 0 ? 'walk' : 'jump' });
 
       } else if (dRow > 0 && M.canJumpUp(dRow, hGap)) {
         // Jump up: reject if a 2-tile wall blocks the face of the jump.
         const dir     = b.minCol > a.maxCol ? 1 : b.maxCol < a.minCol ? -1 : 0;
         const faceCol = dir > 0 ? a.maxCol + 1 : dir < 0 ? a.minCol - 1 : -1;
-        if (faceCol < 0 || !(tileAt(faceCol, a.row - 1) === 1 && tileAt(faceCol, a.row - 2) === 1))
-          aiAdj[i].push({ idx: j, moveType: 'jump' });
+        if (faceCol < 0 || !(at(faceCol, a.row - 1) === 1 && at(faceCol, a.row - 2) === 1))
+          adj[i].push({ idx: j, moveType: 'jump' });
 
       } else if (dRow < 0 && M.canDrop(-dRow, hGap)) {
         // Drop down.
@@ -67,23 +90,25 @@ function buildAIGraph() {
         if (dir !== 0) {
           // Non-overlapping: standard face-wall guard.
           const faceCol = dir > 0 ? a.maxCol + 1 : a.minCol - 1;
-          if (!(tileAt(faceCol, a.row - 1) === 1 && tileAt(faceCol, a.row - 2) === 1))
-            aiAdj[i].push({ idx: j, moveType: 'drop', dropDir: dir });
+          if (!(at(faceCol, a.row - 1) === 1 && at(faceCol, a.row - 2) === 1))
+            adj[i].push({ idx: j, moveType: 'drop', dropDir: dir });
         } else {
           // Overlapping: a valid drop only exists if B extends beyond A on one side.
           // If B is fully inside A's column range, walking off either edge lands
           // outside B — the AI falls past it and can never reach it directly.
           const extendsRight = b.maxCol > a.maxCol;
           const extendsLeft  = b.minCol < a.minCol;
-          if (extendsRight && !(tileAt(a.maxCol + 1, a.row - 1) === 1 && tileAt(a.maxCol + 1, a.row - 2) === 1))
-            aiAdj[i].push({ idx: j, moveType: 'drop', dropDir: 1 });
-          else if (extendsLeft && !(tileAt(a.minCol - 1, a.row - 1) === 1 && tileAt(a.minCol - 1, a.row - 2) === 1))
-            aiAdj[i].push({ idx: j, moveType: 'drop', dropDir: -1 });
+          if (extendsRight && !(at(a.maxCol + 1, a.row - 1) === 1 && at(a.maxCol + 1, a.row - 2) === 1))
+            adj[i].push({ idx: j, moveType: 'drop', dropDir: 1 });
+          else if (extendsLeft && !(at(a.minCol - 1, a.row - 1) === 1 && at(a.minCol - 1, a.row - 2) === 1))
+            adj[i].push({ idx: j, moveType: 'drop', dropDir: -1 });
           // B fully contained within A: no reachable drop — skip.
         }
       }
     }
   }
+
+  return { segs, adj };
 }
 
 // ── Graph queries ──────────────────────────────────────────────────────────

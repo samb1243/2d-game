@@ -14,7 +14,7 @@ let settings = {
   jumpLevel:        2,        // 1..5  → JUMP_LEVELS (2 = classic medium)
   platforms:        3,        // 1..5  → PLAT_DENSITY_LEVELS
   gems:             5,        // 1..10 collectibles per level
-  spikes:           'normal', // 'none' | 'normal' | 'heavy'  (stored; level gen wiring is TODO)
+  spikes:           'normal', // 'none' | 'normal' | 'heavy'  → SPIKE_LEVELS (levelgen placeSpikes)
   movingBlocks:     true,     // moving-platform hazard on/off
   movingSpeedLevel: 3,        // 1..5  → MOVING_SPEED_LEVELS
 };

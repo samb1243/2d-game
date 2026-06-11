@@ -43,13 +43,21 @@ function resolveY(p) {
 
 // Spike contact is checked after both axes are resolved so solid-tile
 // pushes happen first (player can brush a spike corner without dying).
+// Spikes only fill the lower part of their tile (see drawTiles), so the lethal
+// region starts ~a third of the way down — a body whose lowest point is still
+// above the spike tips is just grazing the empty air above them and survives.
+// This is what lets a jumper clear a spike sitting on a floor/platform surface:
+// while airborne over it the feet are above the tips, so no contact.
+const SPIKE_TIP = TILE * 0.34;   // lethal band top, measured from the cell's top
+
 function checkSpikes(p) {
   if (p.dead) return;
+  const feet = p.y + p.h;
   const L = Math.floor(p.x / TILE),       R = Math.floor((p.x + p.w - 1) / TILE);
   const T = Math.floor(p.y / TILE),       B = Math.floor((p.y + p.h - 1) / TILE);
   for (let r = T; r <= B; r++)
     for (let c = L; c <= R; c++)
-      if (tileAt(c, r) === 2) { killPlayer(p); return; }
+      if (tileAt(c, r) === 2 && feet > r * TILE + SPIKE_TIP) { killPlayer(p); return; }
 }
 
 function resolvePlatforms(p) {

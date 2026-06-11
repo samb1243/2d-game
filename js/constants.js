@@ -28,6 +28,19 @@ const JUMP_LEVELS   = [null,
 const MOVING_SPEED_LEVELS = [null, 0.4, 0.9, 1.4, 1.9, 2.5];   // moving-platform speed
 const PLAT_DENSITY_LEVELS = [null, 0.6, 0.8, 1.0, 1.25, 1.5];  // platform-count multiplier
 
+// ── Spike density ───────────────────────────────────────────────────────────
+// How many spike hazards the level generator (levelgen.js placeSpikes) tries to
+// add, keyed by the "Spikes" setting. `floor` = lethal clusters on the floor band
+// the AI must jump over; `plat` = single spikes on the tops of wide platforms.
+// Both are upper bounds — placeSpikes only keeps a spike if the level stays fully
+// solvable (every gem + the flag still reachable on the spike-aware AI graph), so
+// the actual count on any given layout may be lower.
+const SPIKE_LEVELS = {
+  none:   { floor: 0, plat: 0 },
+  normal: { floor: 3, plat: 1 },
+  heavy:  { floor: 4, plat: 2 },
+};
+
 // ── Difficulty presets ──────────────────────────────────────────────────────
 // Clicking a preset in the Settings menu pre-fills the granular sliders below.
 // `custom` carries no level values — it's only the badge label once the player

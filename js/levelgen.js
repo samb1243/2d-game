@@ -68,8 +68,14 @@ function buildLevel(M, ri) {
   const gemPos = pickGems(reachable, flagPlat, GEM_COUNT, grid, ri);
   if (gemPos.length < GEM_COUNT) return null;  // not enough reachable perches — retry
 
-  // Moving platforms — scan the painted grid for empty horizontal runs.
-  const platDefs = buildMovingPlats(grid, ri);
+  // Spikes — lethal tiles on the floor and platform tops. Each one is kept only
+  // if the level stays fully solvable afterwards (gems + flag still reachable on
+  // the spike-aware AI graph), so this never makes a layout impossible.
+  placeSpikes(grid, gemPos, flagPos, allPlats, flagPlat, M, ri);
+
+  // Moving platforms — scan the painted grid for empty horizontal runs (spike
+  // tiles read as non-empty, so platforms never travel over one).
+  const platDefs = buildMovingPlats(grid, flagPos, ri);
 
   return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs };
 }
@@ -218,18 +224,135 @@ function pickGems(candidatePlats, flagPlat, count, grid, ri) {
   return gems;
 }
 
+// ── Spikes ───────────────────────────────────────────────────────────────────
+
+// Sprinkles lethal spike tiles (value 2) onto the floor band and platform tops,
+// mutating `grid` in place. Density comes from the "Spikes" setting (SPIKE_LEVELS).
+// Spikes never touch the player spawns, the flag cell or a gem cell, and — the key
+// guarantee — each candidate is committed only if the level remains fully solvable
+// afterwards, judged with the SAME spike-aware segment graph the AI navigates
+// (buildSegGraph in ai.js). So adding spikes can never strand a gem or the flag.
+function placeSpikes(grid, gemPos, flagPos, allPlats, flagPlat, M, ri) {
+  const dens = SPIKE_LEVELS[settings.spikes] || SPIKE_LEVELS.none;
+  if (!dens.floor && !dens.plat) return;
+
+  const spawnCols   = [2, MAP_W - 3];   // both players drop onto the floor here
+  const SPAWN_CLEAR = 5;                // keep floor spikes this far from each end
+  const FLOOR_ROW   = 14;               // the floor's SURFACE row — a spike here carves a
+                                        // notch the AI jumps over (rows 15-16 stay solid
+                                        // below it). Placing it on the surface, not the
+                                        // empty band above, keeps it below standing-body
+                                        // height so walking up to jump it is safe.
+  const RUNWAY      = 3;                // clear floor tiles required each side of a cluster
+  // Single-tile notches only: a 1-tile gap is the most reliable thing for the AI
+  // to clear at any speed/jump setting (wider notches spike the death rate on weak
+  // jumps), and one tile still reads clearly as a spike pit. If the model can't
+  // even clear one tile, skip floor spikes entirely.
+  const floorCount = M.maxGapTilesForRise(0) >= 1 ? dens.floor : 0;
+
+  const isGem  = (col, row) => gemPos.some(g => g.col === col && g.row === row);
+  const isFlag = (col, row) => flagPos.col === col && flagPos.row === row;
+
+  // Reachability on the freshly-built segment graph: every gem + the flag must
+  // stay reachable from BOTH spawns' floor segments.
+  const segIndexAt = (segs, col, base) => {
+    for (let dr = 0; dr <= 1; dr++)
+      for (let i = 0; i < segs.length; i++) {
+        const s = segs[i];
+        if (s.row === base + dr && col >= s.minCol && col <= s.maxCol) return i;
+      }
+    return -1;
+  };
+  const floorSegAt = (segs, col) => {        // lowest surface under a column = the floor piece
+    let best = -1, bestRow = -1;
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i];
+      if (col >= s.minCol && col <= s.maxCol && s.row > bestRow) { bestRow = s.row; best = i; }
+    }
+    return best;
+  };
+  const reachAll = (segs, adj, start, targets) => {
+    if (start < 0) return false;
+    const seen = new Uint8Array(segs.length);
+    seen[start] = 1;
+    const q = [start];
+    for (let qi = 0; qi < q.length; qi++)
+      for (const { idx } of adj[q[qi]]) if (!seen[idx]) { seen[idx] = 1; q.push(idx); }
+    return targets.every(t => t >= 0 && seen[t]);
+  };
+  const stillSolvable = () => {
+    const { segs, adj } = buildSegGraph(grid, M);
+    const targets = [segIndexAt(segs, flagPos.col, flagPos.row)];
+    for (const g of gemPos) targets.push(segIndexAt(segs, g.col, g.row + 1));
+    return spawnCols.every(c => reachAll(segs, adj, floorSegAt(segs, c), targets));
+  };
+
+  // Commit a candidate spike set only if the level survives it; otherwise restore
+  // each cell to its ORIGINAL tile (solid floor/platform = 1) — reverting to 0
+  // would punch a permanent hole in the surface.
+  const tryCommit = (cells) => {
+    const prev = cells.map(([c, r]) => grid[r][c]);
+    for (const [c, r] of cells) grid[r][c] = 2;
+    if (stillSolvable()) return true;
+    cells.forEach(([c, r], i) => { grid[r][c] = prev[i]; });
+    return false;
+  };
+
+  // ── Floor notches: a single-tile spike with solid runway each side ──
+  // The whole span (notch + runway) must currently be solid floor, so spikes never
+  // abut a spawn-cleared edge or another notch, and both flanks give the AI ground
+  // to run up to and land on.
+  let placedFloor = 0;
+  for (let tries = 0; tries < 200 && placedFloor < floorCount; tries++) {
+    const start = ri(SPAWN_CLEAR, MAP_W - 1 - SPAWN_CLEAR);
+    const lo = start - RUNWAY, hi = start + RUNWAY;
+    if (lo < 0 || hi >= MAP_W) continue;
+    let clear = true;
+    for (let c = lo; c <= hi && clear; c++) if (grid[FLOOR_ROW][c] !== 1) clear = false;
+    if (!clear) continue;
+    if (tryCommit([[start, FLOOR_ROW]])) placedFloor++;
+  }
+
+  // ── Platform tops: single spikes on wide platforms, never the flag platform ──
+  // The spike replaces an INTERIOR surface tile (p.row), splitting the platform
+  // into pieces the AI hops between — kept off the edges (≥1 solid tile each side)
+  // so a jump-up never lands straight onto it, and below the body of anyone
+  // standing alongside. validation drops any that would strand a gem or the flag.
+  const wide = allPlats.filter(p => p.w >= 4 && p !== flagPlat && p.row >= 3 && p.row < 13);
+  for (let i = wide.length - 1; i > 0; i--) { const j = ri(0, i); [wide[i], wide[j]] = [wide[j], wide[i]]; }
+  let placedPlat = 0;
+  for (const p of wide) {
+    if (placedPlat >= dens.plat) break;
+    const row    = p.row;
+    const gemCol = p.col + Math.floor(p.w / 2);      // a gem, if any, floats above here
+    const cands  = [];                                // interior cols, ≥1 solid tile each side
+    for (let c = p.col + 1; c <= p.col + p.w - 2; c++)
+      if (c !== gemCol && grid[row][c] === 1 && !isGem(c, row - 1) && !isFlag(c, row)) cands.push(c);
+    if (!cands.length) continue;
+    const col = cands[ri(0, cands.length - 1)];
+    if (tryCommit([[col, row]])) placedPlat++;
+  }
+}
+
 // ── Moving platforms ───────────────────────────────────────────────────────
 
 // Scans the painted grid for empty horizontal runs on each even platform row.
-// A moving platform is placed in the longest qualifying run (≥ 5 clear tiles on
-// each side of the 2-tile-wide platform's full travel range), one per row.
-function buildMovingPlats(grid, ri) {
+// A moving platform is placed in the longest qualifying run (≥ 4 clear tiles on
+// each side of the 2-tile-wide platform's full travel range), one per row. The
+// flag-pole cells (above the flag platform) are treated as occupied so a platform
+// never slides through the pole.
+function buildMovingPlats(grid, flagPos, ri) {
   const speed   = MOVING_SPEED_LEVELS[settings.movingSpeedLevel];
-  const plats    = [];
-  const tw       = 2;
-  const margin   = 5;   // clear tiles required on each side of the travel range
-  const minSpan  = tw + 2 * margin;
-  const usedRows = new Set();
+  const plats     = [];
+  const tw        = 2;
+  const margin    = 3;   // clear tiles kept beyond each end of the travel range
+  const minTravel = 4;   // the platform must be able to slide at least this far
+  const minSpan   = tw + 2 * margin + minTravel;
+  const usedRows  = new Set();
+
+  // The drawn flag pole rises ~1.6 tiles above its platform — block those cells.
+  const poleBlocked = (row, col) =>
+    col === flagPos.col && (row === flagPos.row - 1 || row === flagPos.row - 2);
 
   for (let row = 6; row <= 12; row += 2) {
     if (usedRows.has(row)) continue;
@@ -238,7 +361,7 @@ function buildMovingPlats(grid, ri) {
     let bestRun = null;
     let runStart = -1;
     for (let col = 0; col <= MAP_W; col++) {
-      const solid = col < MAP_W && grid[row][col] !== 0;
+      const solid = col < MAP_W && (grid[row][col] !== 0 || poleBlocked(row, col));
       if (!solid && runStart < 0) runStart = col;
       if ((solid || col === MAP_W) && runStart >= 0) {
         const len = col - runStart;
@@ -249,11 +372,14 @@ function buildMovingPlats(grid, ri) {
     }
     if (!bestRun) continue;
 
+    // minTx = leftmost left-edge, maxTx = rightmost RIGHT-edge (the travel bounds
+    // initGame turns into minX/maxX, against which physics reverses the platform).
+    // The left edge slides over [minTx, maxTx - tw]; minSpan guarantees that span
+    // is ≥ minTravel tiles, so the platform always has real room to move.
     const minTx = bestRun.start + margin;
-    const maxTx = bestRun.start + bestRun.len - margin - tw;
-    if (maxTx < minTx) continue;
+    const maxTx = bestRun.start + bestRun.len - margin;
 
-    const mid = minTx + Math.floor((maxTx - minTx) / 2);
+    const mid = minTx + Math.floor((maxTx - tw - minTx) / 2);
     plats.push({
       tx: mid, ty: row, tw,
       dx: (Math.random() < 0.5 ? 1 : -1) * speed,

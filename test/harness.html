@@ -76,6 +76,24 @@
       return bad;
     }
 
+    // Generation-correctness: a spike (tile 2) must NEVER sit where a player
+    // spawns/stands, on a gem cell, or on the flag's standing/head cell. Returns
+    // a list of any violations found in the freshly-generated `tiles`.
+    function spikeViolations() {
+      const bad = [];
+      const spike = (col, row) => row >= 0 && row < MAP_H && col >= 0 && col < MAP_W && tiles[row][col] === 2;
+      for (const p of players) {                    // spawn column: body row + the floor it lands on
+        const col = Math.floor((p.respawnX + p.w / 2) / TILE);
+        if (spike(col, 13) || spike(col, 14)) bad.push(`spawn@${col}`);
+      }
+      if (spike(flagPos.col, flagPos.row)) bad.push(`flag@${flagPos.col},${flagPos.row}`);
+      gems.forEach((g, gi) => {                      // the gem cell and the surface under it
+        const col = Math.floor(g.x / TILE), row = Math.floor(g.y / TILE);
+        if (spike(col, row) || spike(col, row + 1)) bad.push('g' + gi);
+      });
+      return bad;
+    }
+
     // ── Jump model summary ───────────────────────────────────────────────
     // One row per jump level (at the default speed). maxRise MUST stay ≥ 2 for
     // every level — the tier-based generator seeds reachability on a 2-tile jump,
@@ -116,6 +134,7 @@
       initGame();
       const ai = players[1];
       const solvable = audit();          // graph reachability from spawn
+      const spikeBad = spikeViolations(); // spikes must avoid spawns/gems/flag
 
       let deaths = 0, wasDead = false, jumps = 0, wasGround = ai.onGround;
       for (let f = 0; f < capFrames; f++) {
@@ -126,12 +145,12 @@
         wasDead = ai.dead;
         if (wasGround && !ai.onGround && ai.vy < 0) jumps++;
         wasGround = ai.onGround;
-        if (ai.finished) return { ok: true, frames: f, gems: ai.gemsCollected, deaths, jumps, solvable };
+        if (ai.finished) return { ok: true, frames: f, gems: ai.gemsCollected, deaths, jumps, solvable, spikeBad };
       }
       const col = Math.floor((ai.x + ai.w / 2) / TILE);
       const row = Math.floor((ai.y + ai.h) / TILE);
       return {
-        ok: false, frames: capFrames, gems: ai.gemsCollected, deaths, jumps, solvable,
+        ok: false, frames: capFrames, gems: ai.gemsCollected, deaths, jumps, solvable, spikeBad,
         stuck: `@${col},${row} mv=${ai.aiMoveType} seg=${getPlayerSegIdx(ai)}`,
       };
     }
@@ -144,6 +163,9 @@
       { label: 'medium',        patch: presetPatch('medium', { movingBlocks: false }) },
       { label: 'hard',          patch: presetPatch('hard',   { movingBlocks: false }) },
       { label: 'medium+moving', patch: presetPatch('medium', { movingBlocks: true  }) },
+      { label: 'spikes-normal', patch: { spikes: 'normal' } },
+      { label: 'spikes-heavy',  patch: { spikes: 'heavy'  } },
+      { label: 'spikes+moving', patch: { spikes: 'heavy', movingBlocks: true } },
       { label: 'speed-1',       patch: { speedLevel: 1 } },
       { label: 'speed-5',       patch: { speedLevel: 5 } },
       { label: 'jump-1',        patch: { jumpLevel: 1 } },
@@ -153,12 +175,14 @@
     ];
 
     log('\n=== AI PLAYTHROUGHS (' + N + ' levels each, cap ' + CAP + ' frames) ===');
-    let grandFail = 0, grandUnsolvable = 0;
+    let grandFail = 0, grandUnsolvable = 0, grandDeaths = 0, grandSpikeBad = 0;
     for (const c of configs) {
       let ok = 0; const fails = [];
-      let sumFrames = 0;
+      let sumFrames = 0, deaths = 0, spikeBad = 0;
       for (let i = 0; i < N; i++) {
         const r = playOne(c.patch, CAP, seedFor(c.label, i));
+        deaths += r.deaths;
+        if (r.spikeBad.length) { spikeBad++; fails.push(`#${i} SPIKE-VIOLATION[${r.spikeBad.join(',')}]`); }
         if (r.ok) { ok++; sumFrames += r.frames; }
         else {
           const unsolv = r.solvable.length > 0;
@@ -166,13 +190,14 @@
           fails.push(`#${i}(g${r.gems}/${GEM_COUNT} d${r.deaths} ${unsolv ? 'UNSOLVABLE[' + r.solvable.join(',') + ']' : r.stuck})`);
         }
       }
-      grandFail += (N - ok);
+      grandFail += (N - ok); grandDeaths += deaths; grandSpikeBad += spikeBad;
       const avg = ok ? (sumFrames / ok / 60).toFixed(1) + 's' : '—';
-      log(`${c.label.padEnd(14)} ${ok}/${N} solved  avg ${avg}`);
+      log(`${c.label.padEnd(14)} ${ok}/${N} solved  avg ${avg}  deaths ${deaths}` + (spikeBad ? `  SPIKEBAD ${spikeBad}` : ''));
       if (fails.length) fails.forEach(f => log('    ' + f));
     }
 
-    log('\nGRAND TOTAL FAILURES: ' + grandFail + '  (unsolvable layouts: ' + grandUnsolvable + ')');
+    log('\nGRAND TOTAL FAILURES: ' + grandFail + '  (unsolvable layouts: ' + grandUnsolvable +
+        ', total deaths: ' + grandDeaths + ', spike-placement violations: ' + grandSpikeBad + ')');
 
     // ── Optional per-seed trace (debugging aid; not run by default) ───────
     // Call from the console or add a line below, e.g.
@@ -203,6 +228,26 @@
       ring.forEach(log);
       log(ai.finished ? '  FINISHED' : '  STUCK x' + Math.floor((ai.x + ai.w / 2) / TILE) + ' g' + ai.gemsCollected);
     };
+
+    (function movingProbe() {
+      let levels = 0, withPlat = 0, totalPlat = 0, embedded = 0, badRange = 0;
+      for (let i = 0; i < 120; i++) {
+        rng = mulberry32(seedFor('mv-probe', i));
+        aiOpponent = true;
+        settings = Object.assign({}, DEFAULTS, presetPatch('hard', { movingBlocks: true }));
+        initGame();
+        levels++;
+        if (platforms.length) withPlat++;
+        totalPlat += platforms.length;
+        for (const pl of platforms) {
+          if (platformHitsSolid(pl)) embedded++;                 // spawned inside a solid tile
+          if (!(pl.minX < pl.maxX && pl.x >= pl.minX && pl.x <= pl.maxX - pl.w)) badRange++;
+        }
+      }
+      log(`\n=== MOVING PLATFORMS (${levels} hard levels) ===`);
+      log(`levels with ≥1 platform: ${withPlat}/${levels}  total platforms: ${totalPlat}  ` +
+          `embedded-in-solid: ${embedded}  bad-travel-range: ${badRange}`);
+    })();
 
     log('DONE');
     document.getElementById('out').textContent = lines.join('\n');
