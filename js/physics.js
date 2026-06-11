@@ -70,7 +70,7 @@ function updatePlayer(p) {
   if (p.finished) return;
   if (p.dead) { if (--p.deathTimer <= 0) respawnPlayer(p); return; }
 
-  const cfg = DIFF[diff];
+  const cfg = activeCfg;
 
   if (p.isAI) {
     applyAIInput(p, cfg);

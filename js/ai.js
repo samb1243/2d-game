@@ -22,7 +22,7 @@ function buildAIGraph() {
   // Physics-derived reachability — every edge below is gated by what the
   // character can actually do with the current movement settings, so the AI
   // never plans a jump it can't make (see jump.js).
-  const M = buildJumpModel(DIFF[diff]);
+  const M = buildJumpModel(activeCfg);
   aiJumpModel = M;
 
   // A surface tile is solid with open space directly above.
@@ -387,7 +387,7 @@ function planFromSeg(p, cfg, curSeg) {
 
 function applyAIInput(p, cfg) {
   aiInit(p);
-  if (!aiJumpModel) aiJumpModel = buildJumpModel(DIFF[diff]);
+  if (!aiJumpModel) aiJumpModel = buildJumpModel(activeCfg);
 
   // Progress / stall tracking → escape hatches if something wedges us.
   if (p.gemsCollected !== p.aiLastGems) { p.aiLastGems = p.gemsCollected; p.aiLastProgressTick = animTick; }

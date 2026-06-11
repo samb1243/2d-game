@@ -26,17 +26,27 @@ function makePlayer(id) {
   };
 }
 
-function initGame() {
-  GEM_COUNT = diff === 'custom' ? customSettings.gems : 5;
-  if (diff === 'custom') DIFF.custom.speed = CUSTOM_SPEED_LEVELS[customSettings.speedLevel];
+// Turn the menu's `settings` levels into the physics `activeCfg` that the level
+// generator, AI graph and player movement all read. Called before every level
+// build so a mid-session settings change takes effect on the next round.
+function applySettings() {
+  const j = JUMP_LEVELS[settings.jumpLevel];
+  activeCfg.gravity = j.gravity;
+  activeCfg.jump    = j.jump;
+  activeCfg.speed   = SPEED_LEVELS[settings.speedLevel];
+}
 
-  const level = generateLevel(diff);
+function initGame() {
+  applySettings();
+  GEM_COUNT = settings.gems;
+
+  const level = generateLevel();
 
   tiles   = level.rows.map(r => r.split('').map(Number));
   flagPos = level.flagPos;
   buildAIGraph();
 
-  platforms = movingBlocks ? level.platDefs.map(d => ({
+  platforms = settings.movingBlocks ? level.platDefs.map(d => ({
     x:    d.tx * TILE,
     y:    d.ty * TILE,
     w:    d.tw * TILE,
@@ -83,6 +93,5 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// Boot — build event listeners then sync the visual state
-buildSetupUI();
-syncSetupUI();
+// Boot — build the menu/settings screens and reflect current settings
+initMenu();

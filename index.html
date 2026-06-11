@@ -33,12 +33,12 @@
     <button class="game-ctrl-btn" id="debug-btn">⬡ AI Debug</button>
   </div>
 
-  <!-- ── Setup overlay ── -->
-  <div class="overlay" id="setup-overlay">
+  <!-- ── Main menu ── -->
+  <div class="overlay" id="menu-overlay">
     <div id="setup-title">GEM RUSH</div>
     <div id="setup-sub">COLLECT ALL GEMS · REACH THE FLAG · RACE TO WIN</div>
 
-    <div id="setup-grid">
+    <div id="menu-grid">
 
       <!-- Player 1 -->
       <div class="player-card p1-card">
@@ -54,46 +54,6 @@
         <div>
           <div class="field-label">HAT</div>
           <div class="hat-row" id="p1-hats"></div>
-        </div>
-      </div>
-
-      <!-- Difficulty -->
-      <div id="diff-card">
-        <h3>DIFFICULTY</h3>
-        <button class="diff-btn diff-easy"            data-d="easy">Easy</button>
-        <button class="diff-btn diff-medium selected" data-d="medium">Medium</button>
-        <button class="diff-btn diff-hard"            data-d="hard">Hard</button>
-        <button class="diff-btn diff-custom"          data-d="custom">Custom</button>
-        <div id="diff-desc">Standard speed &amp; hazards</div>
-        <div id="custom-panel" class="hidden">
-          <div class="cp-row">
-            <span class="cp-lbl">SPEED</span>
-            <input type="range" id="c-speed" min="1" max="5" step="1" value="3">
-            <span id="c-speed-val">3</span>
-          </div>
-          <div class="cp-row">
-            <span class="cp-lbl">GEMS</span>
-            <div class="cp-stepper">
-              <button id="c-gems-dec">−</button>
-              <span id="c-gems-val">5</span>
-              <button id="c-gems-inc">+</button>
-            </div>
-          </div>
-          <div class="cp-stack">
-            <span class="cp-lbl">SPIKES</span>
-            <div class="cp-obs">
-              <button class="obs-btn" data-o="none">None</button>
-              <button class="obs-btn selected" data-o="normal">Normal</button>
-              <button class="obs-btn" data-o="heavy">Heavy</button>
-            </div>
-          </div>
-        </div>
-        <div id="moving-toggle-row">
-          <span class="toggle-label">Moving Blocks</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="moving-toggle" checked>
-            <span class="toggle-track"></span>
-          </label>
         </div>
       </div>
 
@@ -125,7 +85,91 @@
       </div>
 
     </div>
-    <button id="start-btn">START GAME</button>
+
+    <div class="menu-btns">
+      <button id="open-settings-btn">⚙ Settings</button>
+      <button id="start-btn">START GAME</button>
+    </div>
+  </div>
+
+  <!-- ── Settings menu ── -->
+  <div class="overlay hidden" id="settings-overlay">
+    <div id="settings-title">SETTINGS</div>
+
+    <div id="settings-panel">
+
+      <!-- Difficulty presets -->
+      <div class="set-section">
+        <div class="set-section-title">DIFFICULTY PRESET</div>
+        <div class="preset-row">
+          <button class="preset-btn preset-easy"   data-p="easy">Easy</button>
+          <button class="preset-btn preset-medium" data-p="medium">Medium</button>
+          <button class="preset-btn preset-hard"   data-p="hard">Hard</button>
+        </div>
+        <div class="set-hint">Presets fill the options below — tweak any of them to make it your own.</div>
+      </div>
+
+      <!-- Movement -->
+      <div class="set-section">
+        <div class="set-section-title">MOVEMENT</div>
+        <div class="set-row">
+          <span class="set-lbl">Speed</span>
+          <input type="range" id="set-speed" min="1" max="5" step="1" value="3">
+          <span class="set-val" id="set-speed-val">Normal</span>
+        </div>
+        <div class="set-row">
+          <span class="set-lbl">Jump Height</span>
+          <input type="range" id="set-jump" min="1" max="5" step="1" value="2">
+          <span class="set-val" id="set-jump-val">Normal</span>
+        </div>
+      </div>
+
+      <!-- Level -->
+      <div class="set-section">
+        <div class="set-section-title">LEVEL</div>
+        <div class="set-row">
+          <span class="set-lbl">Blocks</span>
+          <input type="range" id="set-plat" min="1" max="5" step="1" value="3">
+          <span class="set-val" id="set-plat-val">Normal</span>
+        </div>
+        <div class="set-row">
+          <span class="set-lbl">Gems</span>
+          <div class="stepper">
+            <button id="set-gems-dec">−</button>
+            <span id="set-gems-val">5</span>
+            <button id="set-gems-inc">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hazards -->
+      <div class="set-section">
+        <div class="set-section-title">HAZARDS</div>
+        <div class="set-row set-row-stack">
+          <span class="set-lbl">Spikes</span>
+          <div class="seg">
+            <button class="spike-btn" data-s="none">None</button>
+            <button class="spike-btn selected" data-s="normal">Normal</button>
+            <button class="spike-btn" data-s="heavy">Heavy</button>
+          </div>
+        </div>
+        <div class="set-row">
+          <span class="set-lbl">Moving Platforms</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="set-moving" checked>
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div class="set-row" id="moving-speed-row">
+          <span class="set-lbl">Platform Speed</span>
+          <input type="range" id="set-moving-speed" min="1" max="5" step="1" value="3">
+          <span class="set-val" id="set-moving-speed-val">Normal</span>
+        </div>
+      </div>
+
+    </div>
+
+    <button id="settings-done">DONE</button>
   </div>
 
   <!-- ── Win overlay ── -->
@@ -145,7 +189,7 @@
     </div>
     <div class="win-btns">
       <button class="win-btn primary" id="again-btn">Play Again</button>
-      <button class="win-btn"         id="settings-btn">Change Settings</button>
+      <button class="win-btn"         id="settings-btn">Main Menu</button>
     </div>
   </div>
 
@@ -157,6 +201,7 @@
   <script src="js/ai.js"></script>
   <script src="js/physics.js"></script>
   <script src="js/draw.js"></script>
+  <script src="js/menu.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>
 

@@ -52,7 +52,7 @@ canvas { border: 2px solid #222; display: block; }
 }
 #setup-sub { font-size: 13px; opacity: 0.45; margin-bottom: 22px; letter-spacing: 1px; }
 
-#setup-grid { display: grid; grid-template-columns: 270px 150px 270px; gap: 16px; align-items: start; }
+#menu-grid { display: grid; grid-template-columns: 290px 290px; gap: 18px; align-items: start; }
 
 .player-card {
   background: rgba(255,255,255,0.05); border: 2px solid;
@@ -90,62 +90,11 @@ canvas { border: 2px solid #222; display: block; }
 .hat-btn:hover { background: rgba(255,255,255,0.12); }
 .hat-btn.selected { border-color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.18); }
 
-#diff-card {
-  background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.12);
-  border-radius: 12px; padding: 16px;
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-}
-#diff-card h3 { font-size: 14px; opacity: 0.7; letter-spacing: 1px; }
-.diff-btn {
-  width: 100%; padding: 11px 8px; border: 2px solid; border-radius: 8px;
-  cursor: pointer; font-size: 14px; font-weight: bold;
-  background: transparent; color: white; transition: all 0.14s;
-}
-.diff-btn:hover { opacity: 0.75; }
-.diff-btn.selected { color: #000 !important; }
-.diff-easy           { border-color: #4d9; }
-.diff-easy.selected  { background: #4d9; }
-.diff-medium         { border-color: #fa4; }
-.diff-medium.selected{ background: #fa4; }
-.diff-hard           { border-color: #f54; }
-.diff-hard.selected  { background: #f54; }
-.diff-custom         { border-color: #c9f; }
-.diff-custom.selected{ background: #c9f; }
-
-#custom-panel {
-  width: 100%; display: flex; flex-direction: column; gap: 9px;
-  border-top: 1px solid rgba(255,255,255,0.1); padding-top: 9px;
-}
-#custom-panel.hidden { display: none; }
-.cp-row { display: flex; align-items: center; gap: 6px; }
-.cp-stack { display: flex; flex-direction: column; gap: 5px; }
-.cp-lbl { font-size: 9px; opacity: 0.55; letter-spacing: 0.5px; white-space: nowrap; flex-shrink: 0; }
-#c-speed { flex: 1; min-width: 0; accent-color: #c9f; }
-#c-speed-val { font-size: 11px; min-width: 12px; text-align: right; opacity: 0.8; flex-shrink: 0; }
-.cp-stepper { display: flex; align-items: center; gap: 5px; margin-left: auto; }
-.cp-stepper button {
-  width: 22px; height: 22px; border-radius: 5px;
-  border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.07);
-  color: white; cursor: pointer; font-size: 15px; line-height: 1;
-  transition: background 0.12s;
-}
-.cp-stepper button:hover { background: rgba(255,255,255,0.18); }
-#c-gems-val { font-size: 14px; font-weight: bold; min-width: 18px; text-align: center; }
-.cp-obs { display: flex; gap: 3px; }
-.obs-btn {
-  flex: 1; padding: 5px 3px; font-size: 9px; font-weight: bold; letter-spacing: 0.3px;
-  border: 1px solid rgba(201,153,255,0.35); border-radius: 5px;
-  background: transparent; color: rgba(255,255,255,0.55); cursor: pointer; transition: all 0.12s;
-}
-.obs-btn:hover { background: rgba(201,153,255,0.15); color: white; }
-.obs-btn.selected { background: rgba(201,153,255,0.28); border-color: #c9f; color: white; }
-#diff-desc { font-size: 10px; opacity: 0.45; text-align: center; line-height: 1.4; min-height: 28px; }
-#moving-toggle-row, .ai-row {
+.ai-row {
   display: flex; align-items: center; justify-content: space-between;
   width: 100%; gap: 10px;
 }
 .ai-lbl { font-size: 12px; opacity: 0.65; }
-.toggle-label { font-size: 12px; opacity: 0.6; }
 .toggle-switch { position: relative; width: 38px; height: 20px; flex-shrink: 0; }
 .toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
 .toggle-track {
@@ -162,13 +111,102 @@ canvas { border: 2px solid #222; display: block; }
 .toggle-switch input:checked + .toggle-track { background: rgba(68,170,255,0.35); border-color: #4af; }
 .toggle-switch input:checked + .toggle-track::before { transform: translateX(18px); background: #4af; }
 
+/* ── Menu buttons ── */
+.menu-btns { display: flex; gap: 14px; margin-top: 22px; align-items: center; }
+
 #start-btn {
-  margin-top: 20px; padding: 14px 64px; font-size: 19px; font-weight: bold;
+  padding: 14px 56px; font-size: 19px; font-weight: bold;
   background: linear-gradient(135deg,#4af,#28e); border: none; border-radius: 10px;
   color: white; cursor: pointer; letter-spacing: 1px; transition: transform 0.1s, opacity 0.1s;
 }
 #start-btn:hover  { transform: scale(1.04); opacity: 0.9; }
 #start-btn:active { transform: scale(0.97); }
+
+#open-settings-btn {
+  padding: 14px 26px; font-size: 15px; font-weight: bold;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 10px; color: rgba(255,255,255,0.85); cursor: pointer;
+  letter-spacing: 0.5px; transition: all 0.13s;
+}
+#open-settings-btn:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.5); color: #fff; }
+
+/* ── Settings screen ── */
+#settings-title {
+  font-size: 34px; font-weight: 900; letter-spacing: 3px; margin-bottom: 18px;
+  background: linear-gradient(135deg,#c9f,#7af);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+#settings-panel {
+  width: 460px; max-width: 92vw;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+.set-section {
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px; padding: 14px 18px;
+  display: flex; flex-direction: column; gap: 11px;
+}
+.set-section-title {
+  font-size: 11px; font-weight: bold; letter-spacing: 1.5px;
+  color: rgba(255,255,255,0.5);
+}
+.set-hint { font-size: 11px; opacity: 0.4; line-height: 1.4; }
+
+.set-row { display: flex; align-items: center; gap: 14px; }
+.set-row-stack { flex-direction: column; align-items: stretch; gap: 7px; }
+.set-lbl { font-size: 14px; flex: 0 0 130px; opacity: 0.9; }
+.set-row-stack .set-lbl { flex: none; opacity: 0.55; font-size: 12px; }
+.set-row input[type="range"] { flex: 1; min-width: 0; accent-color: #c9f; cursor: pointer; }
+.set-val {
+  flex: 0 0 84px; text-align: right; font-size: 13px; font-weight: bold; color: #d9b8ff;
+}
+.set-row.disabled { opacity: 0.4; }
+
+/* Preset buttons */
+.preset-row { display: flex; gap: 8px; }
+.preset-btn {
+  flex: 1; padding: 11px 8px; border: 2px solid; border-radius: 8px;
+  cursor: pointer; font-size: 14px; font-weight: bold;
+  background: transparent; color: white; transition: all 0.14s;
+}
+.preset-btn:hover { opacity: 0.78; }
+.preset-btn.selected { color: #000 !important; }
+.preset-easy            { border-color: #4d9; }
+.preset-easy.selected   { background: #4d9; }
+.preset-medium          { border-color: #fa4; }
+.preset-medium.selected { background: #fa4; }
+.preset-hard            { border-color: #f54; }
+.preset-hard.selected   { background: #f54; }
+
+/* Gems stepper */
+.stepper { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.stepper button {
+  width: 28px; height: 28px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.07);
+  color: white; cursor: pointer; font-size: 18px; line-height: 1;
+  transition: background 0.12s;
+}
+.stepper button:hover { background: rgba(255,255,255,0.18); }
+#set-gems-val { font-size: 16px; font-weight: bold; min-width: 22px; text-align: center; }
+
+/* Spikes segmented control */
+.seg { display: flex; gap: 5px; }
+.spike-btn {
+  flex: 1; padding: 8px 4px; font-size: 12px; font-weight: bold; letter-spacing: 0.3px;
+  border: 1px solid rgba(201,153,255,0.35); border-radius: 6px;
+  background: transparent; color: rgba(255,255,255,0.6); cursor: pointer; transition: all 0.12s;
+}
+.spike-btn:hover { background: rgba(201,153,255,0.15); color: white; }
+.spike-btn.selected { background: rgba(201,153,255,0.28); border-color: #c9f; color: white; }
+
+#settings-done {
+  margin-top: 20px; padding: 13px 56px; font-size: 17px; font-weight: bold;
+  background: linear-gradient(135deg,#c9f,#7af); border: none; border-radius: 10px;
+  color: #14102a; cursor: pointer; letter-spacing: 1px; transition: transform 0.1s, opacity 0.1s;
+}
+#settings-done:hover  { transform: scale(1.04); opacity: 0.92; }
+#settings-done:active { transform: scale(0.97); }
 
 /* ── Win screen ── */
 #win-title { font-size: 54px; font-weight: 900; letter-spacing: 2px; }

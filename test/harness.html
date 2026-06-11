@@ -18,8 +18,7 @@
   <script>
     function refreshHUD() {}
     function endGame()    {}
-    function buildSetupUI() {}
-    function syncSetupUI()  {}
+    function initMenu()   {}
   </script>
 
   <script src="../js/main.js"></script>
@@ -78,28 +77,41 @@
     }
 
     // ── Jump model summary ───────────────────────────────────────────────
-    log('=== JUMP MODEL ===');
-    const cfgs = {
-      easy:   DIFF.easy, medium: DIFF.medium, hard: DIFF.hard,
-      'custom-s1': { gravity: 0.55, jump: -9.4, speed: CUSTOM_SPEED_LEVELS[1] },
-      'custom-s5': { gravity: 0.55, jump: -9.4, speed: CUSTOM_SPEED_LEVELS[5] },
-    };
-    for (const [name, cfg] of Object.entries(cfgs)) {
+    // One row per jump level (at the default speed). maxRise MUST stay ≥ 2 for
+    // every level — the tier-based generator seeds reachability on a 2-tile jump,
+    // so any level that can't clear 2 tiles would make elevated layouts unsolvable.
+    log('=== JUMP MODEL (per jump level @ speed 3) ===');
+    for (let lvl = 1; lvl <= 5; lvl++) {
+      const j = JUMP_LEVELS[lvl];
+      const cfg = { gravity: j.gravity, jump: j.jump, speed: SPEED_LEVELS[3] };
       const m = buildJumpModel(cfg);
       const gaps = [];
       for (let r = 0; r <= m.maxRiseTiles + 1; r++) gaps.push(`r${r}≤${m.maxGapTilesForRise(r)}`);
-      log(`${name.padEnd(10)} peak=${m.peak.toFixed(1)} maxRise=${m.maxRiseTiles}  ${gaps.join(' ')}`);
+      log(`jump${lvl} g=${j.gravity} v=${j.jump}  peak=${m.peak.toFixed(1)} maxRise=${m.maxRiseTiles}  ${gaps.join(' ')}`);
+    }
+    log('--- speed sweep (jump 3) ---');
+    for (const lvl of [1, 5]) {
+      const j = JUMP_LEVELS[3];
+      const m = buildJumpModel({ gravity: j.gravity, jump: j.jump, speed: SPEED_LEVELS[lvl] });
+      const gaps = [];
+      for (let r = 0; r <= m.maxRiseTiles + 1; r++) gaps.push(`r${r}≤${m.maxGapTilesForRise(r)}`);
+      log(`speed${lvl}  peak=${m.peak.toFixed(1)} maxRise=${m.maxRiseTiles}  ${gaps.join(' ')}`);
     }
 
     // ── End-to-end AI playthroughs ───────────────────────────────────────
-    // Set difficulty + options, generate a level, then run the physics loop
+    // Apply a settings patch, generate a level, then run the physics loop
     // headlessly until the AI (player 1) finishes or we hit the frame cap.
-    function playOne(diffKey, custom, moving, capFrames, seed) {
-      rng          = mulberry32(seed);
-      diff         = diffKey;
-      aiOpponent   = true;
-      movingBlocks = moving;
-      if (custom) customSettings = custom;
+    const DEFAULTS = { speedLevel: 3, jumpLevel: 3, platforms: 3, gems: 5, spikes: 'normal', movingBlocks: false, movingSpeedLevel: 3 };
+    const presetPatch = (name, extra) => {
+      const p = {};
+      SETTING_KEYS.forEach(k => { p[k] = PRESETS[name][k]; });
+      return Object.assign(p, extra || {});
+    };
+
+    function playOne(patch, capFrames, seed) {
+      rng        = mulberry32(seed);
+      aiOpponent = true;
+      settings   = Object.assign({}, DEFAULTS, patch);
 
       initGame();
       const ai = players[1];
@@ -128,12 +140,16 @@
     const N   = 40;          // levels per configuration
 
     const configs = [
-      { label: 'easy',          diff: 'easy',   custom: null, moving: false },
-      { label: 'medium',        diff: 'medium', custom: null, moving: false },
-      { label: 'hard',          diff: 'hard',   custom: null, moving: false },
-      { label: 'medium+moving', diff: 'medium', custom: null, moving: true  },
-      { label: 'custom-s1',     diff: 'custom', custom: { speedLevel: 1, gems: 5, obstacles: 'normal' }, moving: false },
-      { label: 'custom-s5',     diff: 'custom', custom: { speedLevel: 5, gems: 5, obstacles: 'normal' }, moving: false },
+      { label: 'easy',          patch: presetPatch('easy',   { movingBlocks: false }) },
+      { label: 'medium',        patch: presetPatch('medium', { movingBlocks: false }) },
+      { label: 'hard',          patch: presetPatch('hard',   { movingBlocks: false }) },
+      { label: 'medium+moving', patch: presetPatch('medium', { movingBlocks: true  }) },
+      { label: 'speed-1',       patch: { speedLevel: 1 } },
+      { label: 'speed-5',       patch: { speedLevel: 5 } },
+      { label: 'jump-1',        patch: { jumpLevel: 1 } },
+      { label: 'jump-5',        patch: { jumpLevel: 5 } },
+      { label: 'blocks-1',      patch: { platforms: 1 } },
+      { label: 'blocks-5',      patch: { platforms: 5 } },
     ];
 
     log('\n=== AI PLAYTHROUGHS (' + N + ' levels each, cap ' + CAP + ' frames) ===');
@@ -142,7 +158,7 @@
       let ok = 0; const fails = [];
       let sumFrames = 0;
       for (let i = 0; i < N; i++) {
-        const r = playOne(c.diff, c.custom, c.moving, CAP, seedFor(c.label, i));
+        const r = playOne(c.patch, CAP, seedFor(c.label, i));
         if (r.ok) { ok++; sumFrames += r.frames; }
         else {
           const unsolv = r.solvable.length > 0;
@@ -160,16 +176,16 @@
 
     // ── Optional per-seed trace (debugging aid; not run by default) ───────
     // Call from the console or add a line below, e.g.
-    //   etrace('medium', null, false, seedFor('medium', 6), 4500);
+    //   etrace({ jumpLevel: 5 }, seedFor('jump-5', 6), 4500);
     // It replays one seed and prints the last ~40 state-change events plus the
     // final stuck/finished status — how every AI bug in this build was found.
-    window.etrace = function (diffKey, custom, moving, seed, capFrames) {
+    window.etrace = function (patch, seed, capFrames) {
       rng = mulberry32(seed);
-      diff = diffKey; aiOpponent = true; movingBlocks = moving;
-      if (custom) customSettings = custom;
+      aiOpponent = true;
+      settings = Object.assign({}, DEFAULTS, patch);
       initGame();
       const ai = players[1];
-      log(`\n=== ETRACE ${diffKey} seed ${seed} gems=${GEM_COUNT} flag@${flagPos.col},${flagPos.row} ===`);
+      log(`\n=== ETRACE ${JSON.stringify(patch)} seed ${seed} gems=${GEM_COUNT} flag@${flagPos.col},${flagPos.row} ===`);
       aiSegs.forEach((s, i) => log(`  seg${i} row${s.row} cols${s.minCol}-${s.maxCol}`));
       let pg = ai.onGround, pk = '', ring = [];
       for (let f = 0; f < capFrames; f++) {

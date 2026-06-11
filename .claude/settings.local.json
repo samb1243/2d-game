@@ -32,7 +32,10 @@
       "Bash(awk '/=== ETRACE/{p=1} p' 'C:\\\\Users\\\\kishi\\\\AppData\\\\Local\\\\Temp/gr13.txt')",
       "Bash(awk *)",
       "Bash(grep -E \"seg\\(9|3\\) row|14>|jump$|drop$|:jump|:drop\")",
-      "Bash(grep -vE \"LAND14 *$\")"
+      "Bash(grep -vE \"LAND14 *$\")",
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\")",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page loadcheck.html)"
     ]
   }
 }

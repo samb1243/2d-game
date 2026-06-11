@@ -1,23 +1,23 @@
-function generateLevel(diffKey) {
+function generateLevel() {
   const ri = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1)) + lo;
 
   // Physics-derived reachability for the active settings — the level generator
   // and the AI (ai.js) consult the SAME model, so anything we mark "reachable"
   // is genuinely jumpable by the character (see jump.js).
-  const M = buildJumpModel(DIFF[diffKey]);
+  const M = buildJumpModel(activeCfg);
 
   // Build until we get a layout where the flag and every gem sit on a platform
   // that is provably reachable from the floor. ensureReachability almost always
   // succeeds on the first try; the retry loop is a guarantee, not a hot path.
   for (let attempt = 0; attempt < 80; attempt++) {
-    const level = buildLevel(diffKey, M, ri);
+    const level = buildLevel(M, ri);
     if (level) return level;
   }
   // Last resort: a trivially solvable fallback (all gems + flag on the floor).
-  return buildFallbackLevel(diffKey, ri);
+  return buildFallbackLevel(ri);
 }
 
-function buildLevel(diffKey, M, ri) {
+function buildLevel(M, ri) {
   // Empty grid
   const grid = Array.from({ length: MAP_H }, () => new Array(MAP_W).fill(0));
 
@@ -34,11 +34,17 @@ function buildLevel(diffKey, M, ri) {
   // This forces players to move sideways between levels.
   // Cols 0–3 and 26–29 are kept clear on row 12 so both spawns (at each end of
   // the floor) drop cleanly to the ground without landing on a platform.
+  // Platform-count multiplier from the "Platforms" setting (level 3 = ×1.0, the
+  // classic counts). nCount keeps at least 1 platform per tier so the higher
+  // tiers never vanish entirely at the sparse end of the slider.
+  const dens = PLAT_DENSITY_LEVELS[settings.platforms];
+  const nCount = (lo, hi) => ri(Math.max(1, Math.round(lo * dens)), Math.max(1, Math.round(hi * dens)));
+
   const allPlats = [];
-  buildTier(allPlats, 12, ri(5, 7), 4, MAP_W - 5, ri);
-  buildTier(allPlats, 10, ri(4, 6), 1, MAP_W - 4, ri);
-  buildTier(allPlats,  8, ri(3, 5), 1, MAP_W - 4, ri);
-  buildTier(allPlats,  6, ri(2, 4), 1, MAP_W - 4, ri);
+  buildTier(allPlats, 12, nCount(5, 7), 4, MAP_W - 5, ri);
+  buildTier(allPlats, 10, nCount(4, 6), 1, MAP_W - 4, ri);
+  buildTier(allPlats,  8, nCount(3, 5), 1, MAP_W - 4, ri);
+  buildTier(allPlats,  6, nCount(2, 4), 1, MAP_W - 4, ri);
 
   // Add stepping stones so every platform is reachable from the floor.
   ensureReachability(allPlats, ri, M);
@@ -63,14 +69,14 @@ function buildLevel(diffKey, M, ri) {
   if (gemPos.length < GEM_COUNT) return null;  // not enough reachable perches — retry
 
   // Moving platforms — scan the painted grid for empty horizontal runs.
-  const platDefs = buildMovingPlats(grid, diffKey, ri);
+  const platDefs = buildMovingPlats(grid, ri);
 
   return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs };
 }
 
 // Guaranteed-solvable fallback used only if 80 random attempts all fail: a
 // single low platform plus floor-level gems and flag. Effectively never hit.
-function buildFallbackLevel(diffKey, ri) {
+function buildFallbackLevel(ri) {
   const grid = Array.from({ length: MAP_H }, () => new Array(MAP_W).fill(0));
   for (let r = 14; r < MAP_H; r++)
     for (let c = 0; c < MAP_W; c++) grid[r][c] = 1;
@@ -217,10 +223,8 @@ function pickGems(candidatePlats, flagPlat, count, grid, ri) {
 // Scans the painted grid for empty horizontal runs on each even platform row.
 // A moving platform is placed in the longest qualifying run (≥ 5 clear tiles on
 // each side of the 2-tile-wide platform's full travel range), one per row.
-function buildMovingPlats(grid, diffKey, ri) {
-  const speed   = diffKey === 'custom'
-    ? CUSTOM_PLAT_SPEEDS[customSettings.speedLevel]
-    : ({ easy: 0.8, medium: 1.4, hard: 2.0 })[diffKey] || 1.4;
+function buildMovingPlats(grid, ri) {
+  const speed   = MOVING_SPEED_LEVELS[settings.movingSpeedLevel];
   const plats    = [];
   const tw       = 2;
   const margin   = 5;   // clear tiles required on each side of the travel range
