@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>endless play check</title></head>
+<body>
+  <canvas id="game" width="960" height="540"></canvas>
+  <pre id="out">running</pre>
+  <div id="timer-display"></div>
+  <script>
+    window.__errors = [];
+    window.onerror = (m, s, l, c) => { window.__errors.push(m + ' @' + l + ':' + c); };
+  </script>
+  <script src="../js/constants.js"></script>
+  <script src="../js/jump.js"></script>
+  <script src="../js/state.js"></script>
+  <script src="../js/levelgen.js"></script>
+  <script src="../js/endlessgen.js"></script>
+  <script src="../js/ai.js"></script>
+  <script src="../js/physics.js"></script>
+  <script src="../js/draw.js"></script>
+  <script>
+    // Stub the DOM-facing helpers (ui.js/menu.js not loaded here).
+    window.__ended = false;
+    function refreshHUD(){} function endGame(){} function initMenu(){}
+    function endEndless(){ window.__ended = true; gameRunning = false; }
+  </script>
+  <script src="../js/main.js"></script>
+  <script>
+  (function () {
+    const out = document.getElementById('out');
+    try {
+      gameMode = 'endless';
+      timeLimit = 90;
+      initGame();                       // → initEndless()
+
+      const p0 = players[0], p1 = players[1];
+      const x0 = p0.x, x1 = p1.x;
+      let everGround0 = false;
+
+      // Drive both players: P1 holds right, P2 holds left; both jump periodically.
+      for (let f = 0; f < 600; f++) {
+        animTick++;
+        keysDown['d'] = true;  keysDown['ArrowLeft'] = true;
+        const jump = (f % 45) < 3;
+        keysDown['w'] = jump;  keysDown['ArrowUp'] = jump;
+        updateEndless();
+        drawEndless();
+        if (p0.onGround) everGround0 = true;
+      }
+
+      const moved0 = Math.abs(p0.x - x0) > TILE;
+      const moved1 = Math.abs(p1.x - x1) > TILE;
+      const streamed = endlessGems.size > 0;
+      const sane0 = isFinite(p0.x) && isFinite(p0.y);
+      const sane1 = isFinite(p1.x) && isFinite(p1.y);
+
+      // Explicit pickup: drop P1 exactly on a nearby gem and confirm it registers.
+      let pickupOk = false;
+      const cc = Math.floor(p0.x / TILE), cr = Math.floor(p0.y / TILE);
+      const near = endlessWorld.gemsInRect(cc - 12, cr - 12, cc + 12, cr + 12);
+      if (near.length) {
+        const g = near[0];
+        p0.x = g.col * TILE + TILE / 2 - p0.w / 2;
+        p0.y = g.row * TILE + TILE / 2 - p0.h / 2;
+        const before = p0.gemsCollected;
+        materializeGemsAround(p0);
+        collectEndlessGems(p0);
+        pickupOk = p0.gemsCollected > before;
+      }
+
+      // Flag: defined on a platform, arrow renders in all branches, contact finishes
+      // the player, and the run ends once both players have finished.
+      const flagDefined = isFinite(endlessFlag.col) && isFinite(endlessFlag.row);
+      keysDown['d'] = keysDown['ArrowLeft'] = keysDown['w'] = keysDown['ArrowUp'] = false;
+      p0.finished = false;
+      p0.x = endlessFlag.col * TILE + TILE / 2 - p0.w / 2;
+      p0.y = endlessFlag.row * TILE - p0.h;
+      drawEndless();                 // flag on-screen, not yet reached (marker branch)
+      updatePlayer(p0);              // contact → finished
+      const reachedFlag = p0.finished;
+      drawEndless();                 // finished → ✓ branch
+      window.__ended = false;
+      p1.finished = true;
+      updateEndless();               // both finished → endEndless()
+      const endedOnBoth = window.__ended === true;
+
+      const fails = [];
+      if (window.__errors.length) fails.push('JS errors: ' + window.__errors.join(' | '));
+      if (!moved0)   fails.push('P1 did not move');
+      if (!moved1)   fails.push('P2 did not move');
+      if (!everGround0) fails.push('P1 never landed on a platform');
+      if (!streamed) fails.push('no gems streamed into range');
+      if (!sane0 || !sane1) fails.push('player coords went non-finite');
+      if (!pickupOk) fails.push('gem pickup did not register');
+      if (!flagDefined) fails.push('flag not placed');
+      if (!reachedFlag) fails.push('flag contact did not finish player');
+      if (!endedOnBoth) fails.push('run did not end when both finished');
+
+      out.textContent = fails.length
+        ? 'FAIL: ' + fails.join('  |  ')
+        : `OK: endless ran clean. P1Δx=${(p0.x - x0).toFixed(0)} ` +
+          `P2Δx=${(p1.x - x1).toFixed(0)} gemsStreamed=${endlessGems.size} ` +
+          `flag@${endlessFlag.col},${endlessFlag.row} reach+score OK`;
+    } catch (e) {
+      out.textContent = 'EXCEPTION: ' + (e && e.stack ? e.stack : e);
+    }
+  })();
+  </script>
+</body></html>

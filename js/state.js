@@ -21,6 +21,17 @@ let settings = {
 let activeCfg  = { gravity: 0.55, jump: -9.4, speed: 4.0 }; // rebuilt by applySettings()
 let presetName = 'medium';    // 'easy' | 'medium' | 'hard' | 'custom' — drives the HUD badge
 let aiOpponent = false;
+
+// ── Game mode ────────────────────────────────────────────────────────────────
+// 'classic' = the fixed map (collect all gems → reach the flag). 'endless' = the
+// infinite both-axes split-screen score attack (two humans, most gems before time).
+let gameMode     = 'classic';
+let timeLimit    = 90;          // endless: seconds per run
+let endlessSeed  = 0;           // endless: world seed (re-randomised each run)
+let endlessWorld = null;        // endless: buildEndlessWorld() handle for the active run
+let endlessGems  = new Map();   // endless: "col,row" → { col,row,x,y,collected:[..] } near players
+let endlessFlag  = { col: 0, row: 0 };  // endless: the goal both players must reach before time
+let cameras      = [{ x: 0, y: 0 }, { x: 0, y: 0 }];  // endless: per-player split-screen cameras
 let wins    = [0, 0];
 let flagPos = { col: 28, row: 13 }; // overwritten by generateLevel each game
 let setup = [
@@ -45,7 +56,6 @@ document.addEventListener('keydown', e => {
   if (typingInField()) return;            // let the form field handle the keystroke
   keysDown[e.key] = true;
   if (GAME_KEYS.includes(e.key)) e.preventDefault();
-  if (e.key === 'p' || e.key === 'P') aiPresetIdx = (aiPresetIdx + 1) % AI_PRESETS.length;
 });
 document.addEventListener('keyup', e => {
   if (typingInField()) return;

@@ -43,8 +43,10 @@ function drawPlatforms() {
   }
 }
 
-function drawFlag() {
-  const fx = flagPos.col * TILE, fy = flagPos.row * TILE;
+function drawFlag() { drawFlagAt(flagPos.col, flagPos.row); }
+
+function drawFlagAt(col, row) {
+  const fx = col * TILE, fy = row * TILE;
 
   ctx.fillStyle = '#999'; ctx.fillRect(fx + 12, fy - 51, 3, 52);
   ctx.fillStyle = '#22cc22';
@@ -146,8 +148,7 @@ function drawPlayer(p) {
 function drawAIDebug(p) {
   if (!showAIDebug || !p.isAI) return;
 
-  const preset = AI_PRESETS[aiPresetIdx];
-  const pSeg   = getPlayerSegIdx(p);
+  const pSeg = getPlayerSegIdx(p);
 
   // ── Segment underlines: cyan = current, yellow = in path, faint blue = other ─
   for (let i = 0; i < aiSegs.length; i++) {
@@ -248,12 +249,9 @@ function drawAIDebug(p) {
   const moveClr  = p.aiMoveType === 'drop' ? '#ff9944'
                  : p.aiMoveType === 'jump' ? '#44ff88' : '#efefef';
   const pathLen  = p.aiPath ? p.aiPath.length : 0;
-  const stuckPct = p.aiStuckTimer || 0;
-  const ttl      = p.aiWaypointDeadline > 0 ? Math.max(0, p.aiWaypointDeadline - animTick) : '—';
   const rows = [
-    { text: `preset: ${preset.name}  [P to cycle]`,                                   color: '#ffe040' },
-    { text: `move: ${(p.aiMoveType||'—').padEnd(4).toUpperCase()}  stuck:${stuckPct}/${preset.stuckAt}`, color: moveClr  },
-    { text: `gnd:${p.onGround?'Y':'N'}  seg:${pSeg>=0?pSeg:'—'}  path:${pathLen>0?pathLen+' segs':'none'}  ttl:${ttl}`, color: '#ffe040' },
+    { text: `move: ${(p.aiMoveType||'—').padEnd(4).toUpperCase()}`, color: moveClr  },
+    { text: `gnd:${p.onGround?'Y':'N'}  seg:${pSeg>=0?pSeg:'—'}  path:${pathLen>0?pathLen+' segs':'none'}`, color: '#ffe040' },
   ];
   ctx.font = 'bold 12px monospace';
   ctx.textAlign = 'left';
@@ -276,4 +274,131 @@ function drawDeathNotice(p) {
   ctx.font = 'bold 12px sans-serif'; ctx.textAlign = p.id === 0 ? 'left' : 'right';
   ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillText(txt, px + 1, H - 6);
   ctx.fillStyle = p.color;             ctx.fillText(txt, px,     H - 7);
+}
+
+// ── Endless split-screen rendering ────────────────────────────────────────────
+// Two viewports side by side (P1 left, P2 right), each a camera-translated window
+// onto the same infinite world. drawPlayer/tiles/gems all work in world coords, so
+// translating the canvas by -camera renders the right slice.
+
+function drawEndless() {
+  ctx.clearRect(0, 0, W, H);
+  renderViewport(0, 0);
+  renderViewport(1, W / 2);
+
+  // Divider between the two viewports.
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';      ctx.fillRect(W / 2 - 2, 0, 4, H);
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+}
+
+function renderViewport(i, vpX) {
+  const vpW = W / 2, vpH = H, cam = cameras[i];
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(vpX, 0, vpW, vpH); ctx.clip();
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#06060f'); bg.addColorStop(1, '#0e0e24');
+  ctx.fillStyle = bg; ctx.fillRect(vpX, 0, vpW, vpH);
+
+  // World pass (camera-translated).
+  ctx.save();
+  ctx.translate(vpX + vpW / 2 - cam.x, vpH / 2 - cam.y);   // world → this viewport
+
+  const c0 = Math.floor((cam.x - vpW / 2) / TILE) - 1, c1 = Math.ceil((cam.x + vpW / 2) / TILE) + 1;
+  const r0 = Math.floor((cam.y - vpH / 2) / TILE) - 1, r1 = Math.ceil((cam.y + vpH / 2) / TILE) + 1;
+
+  drawTilesEndless(c0, c1, r0, r1);
+  drawGemsEndless(c0, c1, r0, r1);
+  drawFlagAt(endlessFlag.col, endlessFlag.row);
+  players.forEach(drawPlayer);
+  ctx.restore();
+
+  // Screen-space overlay for this viewport (still clipped): the flag arrow.
+  drawFlagArrow(i, vpX, vpW, vpH);
+
+  ctx.restore();
+}
+
+// A compass arrow guiding player `i` to the flag. It rides the viewport edge when
+// the flag is off-screen (rotated to point at it, with the distance in tiles), and
+// sits as a small bobbing marker once the flag is in view. Shows ✓ once reached.
+function drawFlagArrow(i, vpX, vpW, vpH) {
+  const cam = cameras[i], p = players[i];
+  const cxS = vpX + vpW / 2, cyS = vpH / 2;
+  const dx = endlessFlag.col * TILE + TILE / 2 - cam.x;   // flag offset from viewport centre
+  const dy = endlessFlag.row * TILE + TILE / 2 - cam.y;
+  const dist = Math.hypot(dx, dy);
+  const ang  = Math.atan2(dy, dx);
+
+  const m = 34, halfW = vpW / 2 - m, halfH = vpH / 2 - m;
+  const tEdge = Math.min(halfW / Math.max(Math.abs(dx), 1e-3), halfH / Math.max(Math.abs(dy), 1e-3));
+  const onScreen = tEdge >= 1;
+  const t  = onScreen ? 1 : tEdge;
+  const ax = cxS + dx * t, ay = cyS + dy * t;
+  const col = p.color;
+
+  if (p.finished) {
+    ctx.fillStyle = col; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('✓', ax, ay + 7);
+    return;
+  }
+
+  if (!onScreen) {
+    ctx.save();
+    ctx.translate(ax, ay); ctx.rotate(ang);
+    ctx.fillStyle = col; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(13, 0); ctx.lineTo(-9, -8); ctx.lineTo(-9, 8); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = col; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    const lx = Math.min(Math.max(ax, vpX + 24), vpX + vpW - 24);
+    const ly = Math.min(Math.max(ay + 18, 16), vpH - 8);
+    ctx.fillText(Math.round(dist / TILE) + 'm', lx, ly);
+  } else {
+    const bob = Math.sin(animTick * 0.12) * 3;
+    ctx.fillStyle = col; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay - 26 + bob); ctx.lineTo(ax - 7, ay - 38 + bob); ctx.lineTo(ax + 7, ay - 38 + bob);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+}
+
+function drawTilesEndless(c0, c1, r0, r1) {
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) {
+      if (tileAt(c, r) !== 1) continue;
+      const x = c * TILE, y = r * TILE;
+      ctx.fillStyle = '#243024'; ctx.fillRect(x, y, TILE, TILE);
+      ctx.fillStyle = '#3a5a3a'; ctx.fillRect(x, y, TILE, 5);
+      ctx.strokeStyle = '#182518'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
+    }
+}
+
+function drawGemsEndless(c0, c1, r0, r1) {
+  for (const gem of endlessWorld.gemsInRect(c0, r0, c1, r1)) {
+    const st = endlessGems.get(gem.col + ',' + gem.row);
+    if (st && st.collected[0] && st.collected[1]) continue;
+    const x   = gem.col * TILE + TILE / 2, y = gem.row * TILE + TILE / 2;
+    const bob = Math.sin(animTick * 0.055 + gem.col * 0.7 + gem.row) * 4;
+    drawGemShape(x, y + bob, !!(st && st.collected[0]), !!(st && st.collected[1]));
+  }
+}
+
+function drawGemShape(x, y, got0, got1) {
+  ctx.globalAlpha = (got0 || got1) ? 0.35 : 1;
+  const grd = ctx.createRadialGradient(x, y, 2, x, y, 15);
+  grd.addColorStop(0, 'rgba(255,255,80,0.55)'); grd.addColorStop(1, 'rgba(255,200,0,0)');
+  ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(x, y, 15, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = '#ffe038'; ctx.strokeStyle = '#e09000'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x, y - 10); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 10); ctx.lineTo(x - 8, y);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  if (got0) { ctx.fillStyle = players[0].color; ctx.beginPath(); ctx.arc(x - 5, y - 14, 3, 0, Math.PI * 2); ctx.fill(); }
+  if (got1) { ctx.fillStyle = players[1].color; ctx.beginPath(); ctx.arc(x + 5, y - 14, 3, 0, Math.PI * 2); ctx.fill(); }
 }

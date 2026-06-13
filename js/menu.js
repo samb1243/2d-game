@@ -46,6 +46,17 @@ function buildPlayerCards() {
   }
 }
 
+// ── Game-mode selector (main menu) ───────────────
+function setMode(m) {
+  gameMode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('selected', b.dataset.m === m));
+  $('mode-desc').textContent = m === 'endless'
+    ? 'Split-screen race — grab the most gems before time runs out.'
+    : 'Collect all gems, then race to the flag.';
+  // The AI opponent only applies to Classic; Endless is always two humans.
+  $('p2-sub').textContent = (m === 'classic' && aiOpponent) ? '· CPU' : '· Arrow Keys';
+}
+
 // ── Settings screen wiring ───────────────────────
 
 // Apply a preset's level values into `settings`, mark it active, reflect the UI.
@@ -110,6 +121,14 @@ function wireSettings() {
     markCustom();
   });
 
+  // Endless time-limit stepper (30..300s)
+  $('set-time-dec').addEventListener('click', () => {
+    if (timeLimit > 30)  { timeLimit -= 30; $('set-time-val').textContent = timeLimit + 's'; }
+  });
+  $('set-time-inc').addEventListener('click', () => {
+    if (timeLimit < 300) { timeLimit += 30; $('set-time-val').textContent = timeLimit + 's'; }
+  });
+
   // Navigation
   $('open-settings-btn').addEventListener('click', openSettings);
   $('settings-done').addEventListener('click', closeSettings);
@@ -131,6 +150,7 @@ function syncSettingsUI() {
   $('set-moving-speed-val').textContent = MOVE_WORDS[settings.movingSpeedLevel];
   $('set-moving-speed').disabled = !settings.movingBlocks;
   $('moving-speed-row').classList.toggle('disabled', !settings.movingBlocks);
+  $('set-time-val').textContent = timeLimit + 's';
   highlightPreset();
 }
 
@@ -185,9 +205,12 @@ function initMenu() {
   buildPlayerCards();
   wireSettings();
 
+  document.querySelectorAll('.mode-btn').forEach(btn =>
+    btn.addEventListener('click', () => setMode(btn.dataset.m)));
+
   $('ai-toggle').addEventListener('change', e => {
     aiOpponent = e.target.checked;
-    $('p2-sub').textContent = aiOpponent ? '· CPU' : '· Arrow Keys';
+    $('p2-sub').textContent = (gameMode === 'classic' && aiOpponent) ? '· CPU' : '· Arrow Keys';
   });
   $('start-btn').addEventListener('click', startGame);
 

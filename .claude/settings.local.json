@@ -35,7 +35,10 @@
       "Bash(grep -vE \"LAND14 *$\")",
       "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\")",
       "PowerShell(Remove-Item *)",
-      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page loadcheck.html)"
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page loadcheck.html)",
+      "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\))",
+      "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\) | Select-Object -First 80)",
+      "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\) | Select-Object -First 70)"
     ]
   }
 }

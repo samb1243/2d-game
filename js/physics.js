@@ -1,4 +1,6 @@
 function tileAt(c, r) {
+  // Endless mode reads the infinite procedural world (no bounds, no walls).
+  if (gameMode === 'endless') return endlessWorld ? endlessWorld.tileAt(c, r) : 0;
   if (c < 0 || c >= MAP_W || r < 0 || r >= MAP_H) return 1;
   return tiles[r][c];
 }
@@ -25,7 +27,9 @@ function resolveX(p) {
 
 // Push the player out of any solid tiles on the Y axis only.
 function resolveY(p) {
-  if (p.y > H + 60) { killPlayer(p); return; }
+  // Endless has no solid floor and no bottom — there is always a tier below, so a
+  // fall just lands you lower; never a death.
+  if (gameMode !== 'endless' && p.y > H + 60) { killPlayer(p); return; }
   const L = Math.floor(p.x / TILE),       R = Math.floor((p.x + p.w - 1) / TILE);
   const T = Math.floor(p.y / TILE),       B = Math.floor((p.y + p.h - 1) / TILE);
   for (let r = T; r <= B; r++) {
@@ -74,6 +78,32 @@ function resolvePlatforms(p) {
 function killPlayer(p)    { p.dead = true; p.deathTimer = 72; p.vx = p.vy = 0; }
 function respawnPlayer(p) { p.x = p.respawnX; p.y = p.respawnY; p.vx = p.vy = 0; p.dead = false; p.onGround = false; }
 
+// Endless pickup: scan the gems materialised near the players (main.js) and credit
+// any the player is touching. Each gem tracks per-player collected flags so both
+// racers can grab the same gem.
+function collectEndlessGems(p) {
+  const pcx = p.x + p.w / 2, pcy = p.y + p.h / 2;
+  for (const g of endlessGems.values()) {
+    if (g.collected[p.id]) continue;
+    if (Math.abs(pcx - g.x) < 22 && Math.abs(pcy - g.y) < 22) {
+      g.collected[p.id] = true;
+      p.gemsCollected++;
+      refreshHUD();
+    }
+  }
+}
+
+// Endless goal: touching the flag finishes the player (locks in their gem score).
+// updatePlayer skips finished players, so they stop and wait out the timer.
+function checkEndlessFlag(p) {
+  if (p.finished) return;
+  const fx = endlessFlag.col * TILE + TILE / 2, fy = endlessFlag.row * TILE + TILE / 2;
+  if (Math.abs(p.x + p.w / 2 - fx) < 34 && Math.abs(p.y + p.h / 2 - fy) < 42) {
+    p.finished = true;
+    refreshHUD();
+  }
+}
+
 function updatePlayer(p) {
   if (p.finished) return;
   if (p.dead) { if (--p.deathTimer <= 0) respawnPlayer(p); return; }
@@ -98,6 +128,9 @@ function updatePlayer(p) {
   p.y += p.vy; resolveY(p);
   checkSpikes(p);
   resolvePlatforms(p);
+
+  // Endless: no edge clamp (infinite). Grab nearby gems and check the goal flag.
+  if (gameMode === 'endless') { collectEndlessGems(p); checkEndlessFlag(p); return; }
 
   p.x = Math.max(0, Math.min(p.x, MAP_W * TILE - p.w));
 

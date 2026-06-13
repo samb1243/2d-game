@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>endless gen harness</title></head>
+<body>
+  <pre id="out">RUNNING…</pre>
+
+  <!-- Real generator + the actual game segment graph (now grid-sized, so it runs on
+       a window cut out of the infinite field). No state.js/physics needed. -->
+  <script src="../js/constants.js"></script>
+  <script src="../js/jump.js"></script>
+  <script src="../js/ai.js"></script>
+  <script src="../js/endlessgen.js"></script>
+
+  <script>
+  (function () {
+    const lines = [];
+    const log = (s) => lines.push(s);
+
+    // Materialise a window [c0,c0+W) × [r0,r0+H) of the world into a tile grid
+    // (grid[r][c], r increasing downward = increasing world row, same as classic).
+    function materialise(world, c0, r0, W, H) {
+      const grid = [];
+      for (let r = 0; r < H; r++) {
+        const row = new Array(W);
+        for (let c = 0; c < W; c++) row[c] = world.tileAt(c0 + c, r0 + r);
+        grid.push(row);
+      }
+      return grid;
+    }
+
+    // Standard BFS over the real segment graph from a start segment.
+    function reachable(adj, start, n) {
+      const seen = new Uint8Array(n);
+      if (start < 0) return seen;
+      seen[start] = 1;
+      const q = [start];
+      for (let qi = 0; qi < q.length; qi++)
+        for (const e of adj[q[qi]]) if (!seen[e.idx]) { seen[e.idx] = 1; q.push(e.idx); }
+      return seen;
+    }
+
+    // Locate the segment whose surface row/col covers (gridCol, gridRow).
+    function segAt(segs, gridRow, gridCol) {
+      for (let i = 0; i < segs.length; i++) {
+        const s = segs[i];
+        if (s.row === gridRow && gridCol >= s.minCol && gridCol <= s.maxCol) return i;
+      }
+      return -1;
+    }
+
+    // ── Per-config audit ──────────────────────────────────────────────────────
+    const W = 90, H = 56;        // window size (cols × rows)
+    const ORIGINS = 24;          // random window origins per config
+    const MARGIN = 8;            // keep audited gems away from the window border
+
+    function audit(label, cfg) {
+      const M = buildJumpModel(cfg);
+      const P = endlessParams(M);
+
+      let gems = 0, unreachable = 0, segTotal = 0, segReach = 0;
+      let ruleBad = 0, detBad = 0;
+      const examples = [];
+
+      for (let o = 0; o < ORIGINS; o++) {
+        // Deterministic but varied window origin (no Math.random — reproducible).
+        const c0 = ((eHash(0xBEEF, o, 1) % 4000) | 0) - 2000;
+        const r0 = ((eHash(0xF00D, o, 2) % 4000) | 0) - 2000;
+        const world = buildEndlessWorld(12345, M, { gemChance: 0.5 });
+
+        const grid = materialise(world, c0, r0, W, H);
+
+        // Determinism: a second independent handle must produce the identical window.
+        const world2 = buildEndlessWorld(12345, M, { gemChance: 0.5 });
+        for (let r = 0; r < H && !detBad; r++)
+          for (let c = 0; c < W; c++)
+            if (world2.tileAt(c0 + c, r0 + r) !== grid[r][c]) { detBad++; break; }
+
+        // Rule conformance: platforms only on even rows; widths in [WMIN,WMAX].
+        for (let r = 0; r < H; r++) {
+          const worldRow = r0 + r;
+          for (let c = 0; c < W; c++) {
+            if (grid[r][c] !== 1) continue;
+            if ((worldRow & 1) !== 0) ruleBad++;                       // odd-row platform
+          }
+        }
+
+        // Reachability on the real graph, BFS from a central segment.
+        const g = buildSegGraph(grid, M);
+        segTotal += g.segs.length;
+        // Start from the segment nearest the window centre.
+        let start = -1, bestD = 1e9;
+        for (let i = 0; i < g.segs.length; i++) {
+          const s = g.segs[i];
+          const cx = (s.minCol + s.maxCol) / 2, cy = s.row;
+          const d = Math.abs(cx - W / 2) + Math.abs(cy - H / 2);
+          if (d < bestD) { bestD = d; start = i; }
+        }
+        const seen = reachable(g.adj, start, g.segs.length);
+        for (let i = 0; i < g.segs.length; i++) if (seen[i]) segReach++;
+
+        // Every gem in the interior must be reachable from the start segment.
+        const gl = world.gemsInRect(c0 + MARGIN, r0 + MARGIN, c0 + W - 1 - MARGIN, r0 + H - 1 - MARGIN);
+        for (const gem of gl) {
+          gems++;
+          const gridRow = (gem.row + 1) - r0;     // platform surface row in grid coords
+          const gridCol = gem.col - c0;
+          const si = segAt(g.segs, gridRow, gridCol);
+          if (si < 0 || !seen[si]) {
+            unreachable++;
+            if (examples.length < 6) examples.push(`o${o} gem@${gem.col},${gem.row} seg=${si}`);
+          }
+        }
+      }
+
+      const connPct = segTotal ? (100 * segReach / segTotal).toFixed(1) : '—';
+      log(`${label.padEnd(12)} GX=${P.GX} W=[${P.WMIN}-${P.WMAX}] dphase=${P.DPHASE} ` +
+          `sameGap=${P.sameGap} upGap=${P.upGap}`);
+      log(`   gems ${gems}  unreachable ${unreachable}  connectivity ${connPct}% ` +
+          `(${segReach}/${segTotal} segs)  ruleBad ${ruleBad}  detBad ${detBad}`);
+      if (examples.length) log('   e.g. ' + examples.join('  |  '));
+    }
+
+    log('=== ENDLESS GENERATOR AUDIT (window ' + W + '×' + H + ', ' + ORIGINS + ' origins each) ===\n');
+    for (let lvl = 1; lvl <= 5; lvl++) {
+      const j = JUMP_LEVELS[lvl];
+      audit('jump' + lvl, { gravity: j.gravity, jump: j.jump, speed: SPEED_LEVELS[3] });
+    }
+    for (const sp of [1, 5]) {
+      const j = JUMP_LEVELS[3];
+      audit('speed' + sp, { gravity: j.gravity, jump: j.jump, speed: SPEED_LEVELS[sp] });
+    }
+
+    log('\nDONE');
+    document.getElementById('out').textContent = lines.join('\n');
+  })();
+  </script>
+</body>
+</html>

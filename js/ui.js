@@ -6,8 +6,24 @@
 // ── HUD ──────────────────────────────────────────
 function refreshHUD() {
   if (!players.length) return;
-  const badge   = PRESETS[presetName] || PRESETS.custom;
   const [p1, p2] = players;
+
+  // Endless: gem score per player, no win count / difficulty badge.
+  if (gameMode === 'endless') {
+    document.getElementById('h1-name').textContent = p1.name;
+    document.getElementById('h1-name').style.color = p1.color;
+    document.getElementById('h1-gems').textContent = `${p1.gemsCollected} gems`;
+    document.getElementById('h1-wins').textContent = p1.finished ? '✓ flag reached' : '';
+    document.getElementById('h2-name').textContent = p2.name;
+    document.getElementById('h2-name').style.color = p2.color;
+    document.getElementById('h2-gems').textContent = `${p2.gemsCollected} gems`;
+    document.getElementById('h2-wins').textContent = p2.finished ? '✓ flag reached' : '';
+    document.getElementById('diff-badge').textContent = 'ENDLESS';
+    document.getElementById('diff-badge').style.color = '#c9f';
+    return;
+  }
+
+  const badge = PRESETS[presetName] || PRESETS.custom;
 
   document.getElementById('h1-name').textContent  = p1.name;
   document.getElementById('h1-name').style.color  = p1.color;
@@ -43,7 +59,39 @@ function endGame() {
   document.getElementById('sb2-wins').textContent    = wins[1];
   document.getElementById('sb2-wins').style.color    = players[1].color;
 
+  document.querySelectorAll('.sb-label').forEach(e => e.textContent = 'WINS');
   document.getElementById('win-overlay').classList.remove('hidden');
+}
+
+// Endless run over. Gems only count if that player reached the flag in time;
+// otherwise their score is 0 and they lose. Winner is the most gems among finishers.
+function endEndless() {
+  gameRunning = false;
+  const [p1, p2] = players;
+  const s1 = p1.finished ? p1.gemsCollected : -1;   // -1 → any finisher outranks them
+  const s2 = p2.finished ? p2.gemsCollected : -1;
+  const win = s1 === s2 ? null : (s1 > s2 ? p1 : p2);
+
+  document.getElementById('win-title').textContent =
+    win ? `${win.name} Wins!`
+        : (p1.finished || p2.finished) ? "It's a Tie!" : 'Nobody reached the flag!';
+  document.getElementById('win-title').style.color = win ? win.color : '#fff';
+  document.getElementById('win-time').textContent =
+    (p1.finished && p2.finished) ? 'Both reached the flag!' : "Time's up!";
+
+  fillEndlessScore('sb1', p1);
+  fillEndlessScore('sb2', p2);
+  document.querySelectorAll('.sb-label').forEach(e => e.textContent = 'GEMS');
+  document.getElementById('win-overlay').classList.remove('hidden');
+}
+
+// One scoreboard row for endless: gem count if the flag was reached, else "✗".
+function fillEndlessScore(id, p) {
+  document.getElementById(id + '-name').textContent = p.name;
+  document.getElementById(id + '-name').style.color = p.color;
+  const wEl = document.getElementById(id + '-wins');
+  wEl.textContent  = p.finished ? p.gemsCollected : '✗';
+  wEl.style.color  = p.finished ? p.color : 'rgba(255,255,255,0.45)';
 }
 
 // ── In-game control bar ──────────────────────────

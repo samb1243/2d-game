@@ -20,9 +20,9 @@ function makePlayer(id) {
     dead: false, deathTimer: 0, onPlatform: null,
     respawnX: spawnX, respawnY: spawnY,
     isAI,
-    aiStuckTimer: 0, aiLastX: spawnX, aiWaypoint: null,
-    aiPath: [], aiTarget: null, aiMoveType: 'walk',
-    aiPlanSeg: -1, aiPlanTarget: null, aiWaypointDeadline: 0,
+    // Draw-facing AI defaults so the debug overlay never reads undefined before
+    // the first AI frame; the working AI state set is initialised in aiInit().
+    aiWaypoint: null, aiPath: [], aiTarget: null, aiMoveType: 'walk',
   };
 }
 
@@ -37,6 +37,8 @@ function applySettings() {
 }
 
 function initGame() {
+  if (gameMode === 'endless') { initEndless(); return; }
+
   applySettings();
   GEM_COUNT = settings.gems;
 
@@ -71,9 +73,105 @@ function initGame() {
   refreshHUD();
 }
 
+// ── Endless mode ──────────────────────────────────────────────────────────────
+// An endless player is always human (no AI), spawned at a world point on a backbone
+// platform; w/h match a normal player (no AI hitbox shrink).
+function makeEndlessPlayer(id, sx, sy) {
+  const s = setup[id];
+  return {
+    id, w: 26, h: 30,
+    vx: 0, vy: 0, onGround: false,
+    x: sx, y: sy,
+    color: COLORS[s.colorIdx], hatIdx: s.hatIdx, name: s.name,
+    keys: id === 0
+      ? { left: 'a', right: 'd', up: 'w' }
+      : { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp' },
+    gemsCollected: 0, finished: false,
+    dead: false, deathTimer: 0, onPlatform: null,
+    respawnX: sx, respawnY: sy, isAI: false,
+  };
+}
+
+function initEndless() {
+  applySettings();
+  const M = buildJumpModel(activeCfg);
+  endlessSeed  = (Math.random() * 2147483647) | 0;     // fresh world each run
+  endlessWorld = buildEndlessWorld(endlessSeed, M, { gemChance: 0.5 });
+  endlessGems  = new Map();
+  platforms    = [];     // clear any moving platforms left over from a classic game
+
+  // Spawn both players standing on backbone platforms at the origin tier (a couple
+  // of slots apart), feet resting on the platform surface.
+  const p0 = endlessWorld.plat(0, 0), p1 = endlessWorld.plat(0, 2);
+  const sx0 = (p0.col + (p0.w >> 1)) * TILE, sy0 = p0.row * TILE - 30;
+  const sx1 = (p1.col + (p1.w >> 1)) * TILE, sy1 = p1.row * TILE - 30;
+  players = [makeEndlessPlayer(0, sx0, sy0), makeEndlessPlayer(1, sx1, sy1)];
+
+  cameras = [{ x: sx0 + 13, y: sy0 + 15 }, { x: sx1 + 13, y: sy1 + 15 }];
+
+  // End flag: a shared goal a mostly-horizontal journey away (direction + small
+  // vertical offset chosen from the seed). Snapped onto a backbone platform so it is
+  // always reachable, and placed far enough that reaching it in time is the real
+  // race. Distance scales with the time limit; tune via DIST_BASE/DIST_PER_SEC.
+  const DIST_BASE = 24, DIST_PER_SEC = 0.45;
+  const dist = Math.round(DIST_BASE + timeLimit * DIST_PER_SEC);
+  const sign = (endlessSeed & 1) ? 1 : -1;
+  const vOff = ((endlessSeed >> 1) % 17) - 8;          // ±8 tiers of vertical offset
+  const fp   = endlessWorld.platNear(p0.col + sign * dist, vOff * 2);
+  endlessFlag = { col: fp.col + (fp.w >> 1), row: fp.row };
+
+  winner      = null;
+  gameRunning = true;
+  startTime   = performance.now();
+  animTick    = 0;
+  refreshHUD();
+}
+
+// Stream the deterministic gems near a player into the persistent collected-state
+// map (so a gem's collected flags survive while it stays in range).
+function materializeGemsAround(p) {
+  const cc = Math.floor((p.x + p.w / 2) / TILE), cr = Math.floor((p.y + p.h / 2) / TILE);
+  const R  = 16;
+  for (const g of endlessWorld.gemsInRect(cc - R, cr - R, cc + R, cr + R)) {
+    const key = g.col + ',' + g.row;
+    if (!endlessGems.has(key))
+      endlessGems.set(key, {
+        col: g.col, row: g.row,
+        x: g.col * TILE + TILE / 2, y: g.row * TILE + TILE / 2,
+        collected: [false, false],
+      });
+  }
+}
+
+function updateEndless() {
+  players.forEach(materializeGemsAround);
+  players.forEach(updatePlayer);
+
+  for (let i = 0; i < 2; i++) {                 // cameras ease toward their player
+    const p = players[i], cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+    cameras[i].x += (cx - cameras[i].x) * 0.12;
+    cameras[i].y += (cy - cameras[i].y) * 0.12;
+  }
+
+  // Run ends when both players have reached the flag, or the timer expires.
+  if (players.every(p => p.finished)) { endEndless(); return; }
+
+  const remaining = timeLimit - (performance.now() - startTime) / 1000;
+  document.getElementById('timer-display').textContent = Math.max(0, remaining).toFixed(1) + 's';
+  if (remaining <= 0) endEndless();
+}
+
 function loop() {
   if (!gameRunning) return;
   animTick++;
+
+  if (gameMode === 'endless') {
+    updateEndless();
+    drawEndless();
+    rafId = requestAnimationFrame(loop);
+    return;
+  }
+
   updatePlatforms();
   players.forEach(updatePlayer);
 

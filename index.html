@@ -38,6 +38,14 @@
     <div id="setup-title">GEM RUSH</div>
     <div id="setup-sub">COLLECT ALL GEMS · REACH THE FLAG · RACE TO WIN</div>
 
+    <div id="mode-select">
+      <div class="seg mode-seg">
+        <button class="mode-btn selected" data-m="classic">⚑ Classic</button>
+        <button class="mode-btn" data-m="endless">∞ Endless</button>
+      </div>
+      <div id="mode-desc">Collect all gems, then race to the flag.</div>
+    </div>
+
     <div id="menu-grid">
 
       <!-- Player 1 -->
@@ -142,6 +150,20 @@
         </div>
       </div>
 
+      <!-- Endless mode -->
+      <div class="set-section" id="endless-section">
+        <div class="set-section-title">ENDLESS MODE</div>
+        <div class="set-row">
+          <span class="set-lbl">Time Limit</span>
+          <div class="stepper">
+            <button id="set-time-dec">−</button>
+            <span id="set-time-val">90s</span>
+            <button id="set-time-inc">+</button>
+          </div>
+        </div>
+        <div class="set-hint">Split-screen — both players race to grab the most gems before time runs out.</div>
+      </div>
+
       <!-- Hazards -->
       <div class="set-section">
         <div class="set-section-title">HAZARDS</div>
@@ -198,6 +220,7 @@
   <script src="js/jump.js"></script>
   <script src="js/state.js"></script>
   <script src="js/levelgen.js"></script>
+  <script src="js/endlessgen.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/physics.js"></script>
   <script src="js/draw.js"></script>

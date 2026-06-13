@@ -100,12 +100,14 @@ function buildFallbackLevel(ri) {
 
 // ── Tier builder ───────────────────────────────────────────────────────────
 
-// Places `count` platforms at `row`, each with random width (2–4) and column
+// Places `count` platforms at `row`, each with random width (2–5) and column
 // position within [minCol, maxCol]. Uses platOverlap to enforce all spacing rules.
+// The wider end (5) gives spike-heavy levels room to rest two spaced spikes on a
+// single platform (see placeSpikes) instead of being capped at one per platform.
 function buildTier(allPlats, row, count, minCol, maxCol, ri) {
   for (let i = 0; i < count; i++) {
     for (let t = 0; t < 100; t++) {
-      const w   = ri(2, 4);
+      const w   = ri(2, 5);
       const col = ri(minCol, Math.max(minCol, maxCol - w));
       if (!platOverlap(allPlats, col, row, w)) {
         allPlats.push({ col, row, w, main: false });
@@ -201,14 +203,21 @@ function ensureReachability(allPlats, ri, M) {
 
 // ── Gem placement ──────────────────────────────────────────────────────────
 
+// Fisher–Yates in-place shuffle driven by the generator's seeded `ri`, so the
+// RNG call order is identical to the inline loops it replaces (reproducible seeds).
+function shuffleInPlace(arr, ri) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = ri(0, i);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function pickGems(candidatePlats, flagPlat, count, grid, ri) {
   const eligible = candidatePlats.filter(p =>
     !(p.col <= flagPlat.col && flagPlat.col < p.col + p.w && p.row === flagPlat.row)
   );
-  for (let i = eligible.length - 1; i > 0; i--) {
-    const j = ri(0, i);
-    [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
-  }
+  shuffleInPlace(eligible, ri);
   const gems = [];
   for (const p of eligible) {
     if (gems.length >= count) break;
@@ -226,29 +235,28 @@ function pickGems(candidatePlats, flagPlat, count, grid, ri) {
 
 // ── Spikes ───────────────────────────────────────────────────────────────────
 
-// Sprinkles lethal spike tiles (value 2) onto the floor band and platform tops,
-// mutating `grid` in place. Density comes from the "Spikes" setting (SPIKE_LEVELS).
+// Sprinkles lethal spike tiles (value 2) onto platform tops, mutating `grid` in
+// place. Density comes from the "Spikes" setting (SPIKE_LEVELS). Spikes rest ON
+// TOP of a platform (the empty cell above an interior surface tile); the platform
+// tile stays solid, so the platform is never cut into pieces — it just gains a
+// hazard the AI hops straight up and over. The ground floor is never spiked.
 // Spikes never touch the player spawns, the flag cell or a gem cell, and — the key
 // guarantee — each candidate is committed only if the level remains fully solvable
 // afterwards, judged with the SAME spike-aware segment graph the AI navigates
 // (buildSegGraph in ai.js). So adding spikes can never strand a gem or the flag.
 function placeSpikes(grid, gemPos, flagPos, allPlats, flagPlat, M, ri) {
   const dens = SPIKE_LEVELS[settings.spikes] || SPIKE_LEVELS.none;
-  if (!dens.floor && !dens.plat) return;
+  if (!dens.plat) return;
 
-  const spawnCols   = [2, MAP_W - 3];   // both players drop onto the floor here
-  const SPAWN_CLEAR = 5;                // keep floor spikes this far from each end
-  const FLOOR_ROW   = 14;               // the floor's SURFACE row — a spike here carves a
-                                        // notch the AI jumps over (rows 15-16 stay solid
-                                        // below it). Placing it on the surface, not the
-                                        // empty band above, keeps it below standing-body
-                                        // height so walking up to jump it is safe.
-  const RUNWAY      = 3;                // clear floor tiles required each side of a cluster
-  // Single-tile notches only: a 1-tile gap is the most reliable thing for the AI
-  // to clear at any speed/jump setting (wider notches spike the death rate on weak
-  // jumps), and one tile still reads clearly as a spike pit. If the model can't
-  // even clear one tile, skip floor spikes entirely.
-  const floorCount = M.maxGapTilesForRise(0) >= 1 ? dens.floor : 0;
+  const spawnCols = [2, MAP_W - 3];   // both players drop onto the floor here; the
+                                      // solvability check must reach the goals from each
+  // A spike resting on a platform must be hopped STRAIGHT up and over (the tile is
+  // solid beneath it, so you can't run across — see aiDriveHop's overSpike branch).
+  // That hop only lands safely when the character has enough horizontal reach to
+  // clear the spike column before falling back onto the tips; at the slowest speeds
+  // the body descends onto the spike mid-crossing. Gate platform spikes on that
+  // reach (a flat hop clearing ≥2 tiles) so we never plant one the AI can't pass.
+  const platCount = M.maxGapTilesForRise(0) >= 2 ? dens.plat : 0;
 
   const isGem  = (col, row) => gemPos.some(g => g.col === col && g.row === row);
   const isFlag = (col, row) => flagPos.col === col && flagPos.row === row;
@@ -298,39 +306,34 @@ function placeSpikes(grid, gemPos, flagPos, allPlats, flagPlat, M, ri) {
     return false;
   };
 
-  // ── Floor notches: a single-tile spike with solid runway each side ──
-  // The whole span (notch + runway) must currently be solid floor, so spikes never
-  // abut a spawn-cleared edge or another notch, and both flanks give the AI ground
-  // to run up to and land on.
-  let placedFloor = 0;
-  for (let tries = 0; tries < 200 && placedFloor < floorCount; tries++) {
-    const start = ri(SPAWN_CLEAR, MAP_W - 1 - SPAWN_CLEAR);
-    const lo = start - RUNWAY, hi = start + RUNWAY;
-    if (lo < 0 || hi >= MAP_W) continue;
-    let clear = true;
-    for (let c = lo; c <= hi && clear; c++) if (grid[FLOOR_ROW][c] !== 1) clear = false;
-    if (!clear) continue;
-    if (tryCommit([[start, FLOOR_ROW]])) placedFloor++;
-  }
-
-  // ── Platform tops: single spikes on wide platforms, never the flag platform ──
-  // The spike replaces an INTERIOR surface tile (p.row), splitting the platform
-  // into pieces the AI hops between — kept off the edges (≥1 solid tile each side)
-  // so a jump-up never lands straight onto it, and below the body of anyone
-  // standing alongside. validation drops any that would strand a gem or the flag.
-  const wide = allPlats.filter(p => p.w >= 4 && p !== flagPlat && p.row >= 3 && p.row < 13);
-  for (let i = wide.length - 1; i > 0; i--) { const j = ri(0, i); [wide[i], wide[j]] = [wide[j], wide[i]]; }
+  // ── Platform tops: a single spike resting ON a wide platform, never the flag one ──
+  // The spike sits in the empty cell ABOVE an INTERIOR surface tile (row-1); the
+  // platform tile under it stays solid. The walkable surface is split into two pieces
+  // around the spike (the AI hops straight up and over between them), but the platform
+  // itself is never holed. Kept off the edges (≥1 solid tile each side) so a jump
+  // lands on solid surface beside it, and off the gem column. validation drops any
+  // that would strand a gem or the flag.
+  // One spike per platform: it lands in an interior column (≥1 solid tile each side)
+  // so the AI always has a solid surface to stand on beside it and hop straight up
+  // and over. Widening platforms (buildTier) makes more platforms eligible, which —
+  // not stacking spikes onto a single platform — is what lets denser settings place
+  // more spikes while every hop stays the reliable single-spike hop. Each candidate
+  // is committed only if the level stays solvable.
+  const wide = shuffleInPlace(
+    allPlats.filter(p => p.w >= 4 && p !== flagPlat && p.row >= 3 && p.row < 13), ri);
   let placedPlat = 0;
   for (const p of wide) {
-    if (placedPlat >= dens.plat) break;
-    const row    = p.row;
+    if (placedPlat >= platCount) break;
+    const row    = p.row;                            // platform surface (stays solid)
+    const top    = row - 1;                          // empty cell above — the spike sits here
     const gemCol = p.col + Math.floor(p.w / 2);      // a gem, if any, floats above here
     const cands  = [];                                // interior cols, ≥1 solid tile each side
     for (let c = p.col + 1; c <= p.col + p.w - 2; c++)
-      if (c !== gemCol && grid[row][c] === 1 && !isGem(c, row - 1) && !isFlag(c, row)) cands.push(c);
+      if (c !== gemCol && grid[row][c] === 1 && grid[top][c] === 0 &&
+          !isGem(c, top) && !isFlag(c, row)) cands.push(c);
     if (!cands.length) continue;
     const col = cands[ri(0, cands.length - 1)];
-    if (tryCommit([[col, row]])) placedPlat++;
+    if (tryCommit([[col, top]])) placedPlat++;
   }
 }
 

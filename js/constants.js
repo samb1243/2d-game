@@ -30,15 +30,15 @@ const PLAT_DENSITY_LEVELS = [null, 0.6, 0.8, 1.0, 1.25, 1.5];  // platform-count
 
 // ── Spike density ───────────────────────────────────────────────────────────
 // How many spike hazards the level generator (levelgen.js placeSpikes) tries to
-// add, keyed by the "Spikes" setting. `floor` = lethal clusters on the floor band
-// the AI must jump over; `plat` = single spikes on the tops of wide platforms.
-// Both are upper bounds — placeSpikes only keeps a spike if the level stays fully
-// solvable (every gem + the flag still reachable on the spike-aware AI graph), so
-// the actual count on any given layout may be lower.
+// add, keyed by the "Spikes" setting. `plat` = single spikes resting on the tops
+// of wide platforms (the AI hops straight up and over them); the ground floor is
+// never spiked. It's an upper bound — placeSpikes only keeps a spike if the level
+// stays fully solvable (every gem + the flag still reachable on the spike-aware AI
+// graph), so the actual count on any given layout may be lower.
 const SPIKE_LEVELS = {
-  none:   { floor: 0, plat: 0 },
-  normal: { floor: 3, plat: 1 },
-  heavy:  { floor: 4, plat: 2 },
+  none:   { plat: 0 },
+  normal: { plat: 2 },
+  heavy:  { plat: 6 },
 };
 
 // ── Difficulty presets ──────────────────────────────────────────────────────
