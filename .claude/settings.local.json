@@ -41,7 +41,16 @@
       "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\) | Select-Object -First 70)",
       "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endlesscheck.html\")",
       "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endless.html\")",
-      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endless.html\"; & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endlesscheck.html\")"
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endless.html\"; & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endlesscheck.html\")",
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" loadcheck.html)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(git --no-pager diff --stat HEAD)",
+      "Bash(git --no-pager diff HEAD -- js/constants.js js/state.js js/main.js)",
+      "Bash(sed -n '6,12p' js/main.js)",
+      "Bash(git --no-pager show HEAD:js/main.js)",
+      "Bash(git --no-pager show 1b8acf7:js/main.js)",
+      "Bash(sed -n '1,12p')"
     ]
   }
 }

@@ -121,6 +121,12 @@ function wireSettings() {
     markCustom();
   });
 
+  // Moving spikes toggle (lethal patrollers; they reuse the platform-speed slider)
+  $('set-moving-spikes').addEventListener('change', e => {
+    settings.movingSpikes = e.target.checked;
+    markCustom();
+  });
+
   // Endless time-limit stepper (30..300s)
   $('set-time-dec').addEventListener('click', () => {
     if (timeLimit > 30)  { timeLimit -= 30; $('set-time-val').textContent = timeLimit + 's'; }
@@ -146,6 +152,7 @@ function syncSettingsUI() {
   document.querySelectorAll('.spike-btn')
     .forEach(b => b.classList.toggle('selected', b.dataset.s === settings.spikes));
   $('set-moving').checked = settings.movingBlocks;
+  $('set-moving-spikes').checked = settings.movingSpikes;
   $('set-moving-speed').value = settings.movingSpeedLevel;
   $('set-moving-speed-val').textContent = MOVE_WORDS[settings.movingSpeedLevel];
   $('set-moving-speed').disabled = !settings.movingBlocks;

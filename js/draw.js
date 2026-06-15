@@ -43,6 +43,32 @@ function drawPlatforms() {
   }
 }
 
+// Moving spikes: a patrolling spiked block sliding along an air-gap lane. Reuses the
+// red-triangle look of the static spikes (drawTiles, tile === 2) on a dark metal base.
+function drawMovingSpikes() {
+  for (const s of movingSpikes) {
+    // soft shadow on the lane
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(s.x + s.w / 2, s.y + s.h + 2, s.w / 2, 3, 0, 0, Math.PI * 2); ctx.fill();
+
+    // metal base
+    ctx.fillStyle = '#2a0c0c'; ctx.fillRect(s.x, s.y + s.h * 0.5, s.w, s.h * 0.5);
+    ctx.fillStyle = '#5a1818'; ctx.fillRect(s.x, s.y + s.h * 0.5, s.w, 3);
+
+    // upward spikes
+    ctx.fillStyle = '#e23030';
+    const n  = Math.max(2, Math.round(s.w / (TILE / 4)));
+    const sw = s.w / n;
+    for (let i = 0; i < n; i++) {
+      ctx.beginPath();
+      ctx.moveTo(s.x + i * sw,          s.y + s.h);
+      ctx.lineTo(s.x + i * sw + sw / 2, s.y + s.h * 0.08);
+      ctx.lineTo(s.x + i * sw + sw,     s.y + s.h);
+      ctx.fill();
+    }
+  }
+}
+
 function drawFlag() { drawFlagAt(flagPos.col, flagPos.row); }
 
 function drawFlagAt(col, row) {

@@ -1,5 +1,8 @@
 // Mutable game state — written by main.js/physics.js, read by everyone
-let tiles = [], gems = [], platforms = [], players = [];
+// `movingSpikes` (the array) holds the live lethal patroller entities; the on/off
+// flag is `settings.movingSpikes` below — different scopes, same name on purpose so
+// they read as a pair (cf. `platforms` ↔ `settings.movingBlocks`).
+let tiles = [], gems = [], platforms = [], movingSpikes = [], players = [];
 let gameRunning = false, startTime = 0, winner = null, animTick = 0, rafId = null;
 let showAIDebug = false;
 
@@ -16,7 +19,8 @@ let settings = {
   gems:             5,        // 1..10 collectibles per level
   spikes:           'normal', // 'none' | 'normal' | 'heavy'  → SPIKE_LEVELS (levelgen placeSpikes)
   movingBlocks:     true,     // moving-platform hazard on/off
-  movingSpeedLevel: 3,        // 1..5  → MOVING_SPEED_LEVELS
+  movingSpeedLevel: 3,        // 1..5  → MOVING_SPEED_LEVELS (platforms + spikes)
+  movingSpikes:     false,    // air-gap patrolling spike hazard on/off
 };
 let activeCfg  = { gravity: 0.55, jump: -9.4, speed: 4.0 }; // rebuilt by applySettings()
 let presetName = 'medium';    // 'easy' | 'medium' | 'hard' | 'custom' — drives the HUD badge

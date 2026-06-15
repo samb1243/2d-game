@@ -77,7 +77,11 @@ function buildLevel(M, ri) {
   // tiles read as non-empty, so platforms never travel over one).
   const platDefs = buildMovingPlats(grid, flagPos, ri);
 
-  return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs };
+  // Moving spikes — lethal patrollers sliding along the empty lanes between tiers.
+  // Each is kept only if the level stays solvable with the hops it threatens removed.
+  const spikeDefs = settings.movingSpikes ? buildMovingSpikes(grid, gemPos, flagPos, M, ri, platDefs) : [];
+
+  return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs, spikeDefs };
 }
 
 // Guaranteed-solvable fallback used only if 80 random attempts all fail: a
@@ -95,7 +99,7 @@ function buildFallbackLevel(ri) {
     const c = cols[i % cols.length];
     gemPos.push({ col: c, row: i % cols.length === 4 ? 11 : 13 });
   }
-  return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs: [] };
+  return { rows: grid.map(r => r.join('')), gemPos, flagPos, platDefs: [], spikeDefs: [] };
 }
 
 // ── Tier builder ───────────────────────────────────────────────────────────
@@ -392,4 +396,106 @@ function buildMovingPlats(grid, flagPos, ri) {
   }
 
   return plats;
+}
+
+// ── Moving spikes ────────────────────────────────────────────────────────────
+
+// A lethal spiked block that slides along an odd "lane" row (11/9/7) ABOVE a genuine
+// GAP — a run of columns that is empty both in the lane and in the tier directly below
+// it. Patrolling over a gap (never over a platform) means the ONLY way to meet it is
+// mid-crossing: a jump/drop whose arc passes through the lane. The player times that
+// jump; the AI waits for the spike to slide clear before taking off (the spikeLane gate
+// in aiDriveHop). There is no platform under the sweep, so a body can never be standing
+// when the spike passes — which keeps it off the "can't avoid it" deaths. A candidate
+// is committed only if (a) it overlaps ≥1 AI hop (else it's decoration the AI never
+// meets) AND (b) the level stays solvable with EVERY such hop removed, so the AI always
+// has a spike-free fallback (a hopeless wait just bans the edge and reroutes). Speed
+// reuses the moving-platform setting. Returns tile-space defs (initGame builds boxes).
+function buildMovingSpikes(grid, gemPos, flagPos, M, ri, platDefs) {
+  const speed     = MOVING_SPEED_LEVELS[settings.movingSpeedLevel];
+  const spawnCols = [2, MAP_W - 3];   // solvability must hold from both spawns' floors
+  const tw        = 1;                // one-tile spiked block
+  const minSpan   = 7;                // gap run width needed (≥4 tiles of travel after margins)
+  const spikes    = [];               // committed runtime-style boxes (validation input)
+  const defs      = [];               // returned tile-space defs
+
+  // Reuse the placeSpikes-style segment-graph reachability, but on the spike-AWARE
+  // graph: a candidate is solvable iff every gem + the flag is still reachable from
+  // both spawn floor segments using only NON-spiked edges (e.spikeLane unset).
+  const segIndexAt = (segs, col, base) => {
+    for (let dr = 0; dr <= 1; dr++)
+      for (let i = 0; i < segs.length; i++) {
+        const s = segs[i];
+        if (s.row === base + dr && col >= s.minCol && col <= s.maxCol) return i;
+      }
+    return -1;
+  };
+  const floorSegAt = (segs, col) => {
+    let best = -1, bestRow = -1;
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i];
+      if (col >= s.minCol && col <= s.maxCol && s.row > bestRow) { bestRow = s.row; best = i; }
+    }
+    return best;
+  };
+  const reachAll = (segs, adj, start, targets) => {
+    if (start < 0) return false;
+    const seen = new Uint8Array(segs.length); seen[start] = 1;
+    const q = [start];
+    for (let qi = 0; qi < q.length; qi++)
+      for (const e of adj[q[qi]]) if (!e.spikeLane && !seen[e.idx]) { seen[e.idx] = 1; q.push(e.idx); }
+    return targets.every(t => t >= 0 && seen[t]);
+  };
+  const tagged = (adj) => { for (const list of adj) for (const e of list) if (e.spikeLane) return true; return false; };
+  const solvableWith = (cands) => {
+    const { segs, adj } = buildSegGraph(grid, M);
+    tagSpikedEdges(segs, adj, cands, M);
+    if (!tagged(adj)) return false;                  // over no hop → not a real hazard
+    const targets = [segIndexAt(segs, flagPos.col, flagPos.row)];
+    for (const g of gemPos) targets.push(segIndexAt(segs, g.col, g.row + 1));
+    return spawnCols.every(c => reachAll(segs, adj, floorSegAt(segs, c), targets));
+  };
+
+  // Never sweep over a gem or the flag (it would slide through them); never share a
+  // gap with a moving platform (a rider on the platform would be hit from above).
+  const overGemOrFlag = (row, c0, c1) =>
+    gemPos.some(g => Math.abs(g.row - row) <= 1 && g.col >= c0 - 1 && g.col <= c1 + 1) ||
+    (Math.abs(flagPos.row - row) <= 2 && flagPos.col >= c0 - 1 && flagPos.col <= c1 + 1);
+  const platInGap = (below, c0, c1) =>
+    (platDefs || []).some(d => d.ty === below && d.minTx <= c1 + 1 && d.maxTx >= c0);
+
+  const rows = shuffleInPlace([11, 9, 7], ri);
+  for (const row of rows) {
+    if (defs.length >= MOVING_SPIKE_COUNT) break;
+    const below = row + 1;             // even tier directly under the lane
+
+    // Longest run of columns that is empty in the lane AND the tier below (a real gap).
+    let best = null, runStart = -1;
+    for (let c = 0; c <= MAP_W; c++) {
+      const open = c < MAP_W && grid[row][c] === 0 && grid[below][c] === 0;
+      if (open && runStart < 0) runStart = c;
+      if ((!open || c === MAP_W) && runStart >= 0) {
+        const len = c - runStart;
+        if (len >= minSpan && (!best || len > best.len)) best = { start: runStart, len };
+        runStart = -1;
+      }
+    }
+    if (!best) continue;
+
+    const c0 = best.start + 1;                       // keep 1 tile off each flank so a body
+    const c1 = best.start + best.len - 2;            // standing at the gap's edge is never clipped
+    if (c1 - c0 < 2) continue;
+    if (overGemOrFlag(row, c0, c1) || platInGap(below, c0, c1)) continue;
+
+    // tile-space sweep → runtime box: left edge slides over [minX, maxX - w].
+    const box = {
+      x: c0 * TILE, y: row * TILE, w: tw * TILE, h: TILE,
+      dx: (ri(0, 1) ? 1 : -1) * speed,
+      minX: c0 * TILE, maxX: (c1 + 1) * TILE,
+    };
+    if (!solvableWith([...spikes, box])) continue;
+    spikes.push(box);
+    defs.push({ tx: c0, ty: row, tw, dx: box.dx, minTx: c0, maxTx: c1 + 1 });
+  }
+  return defs;
 }

@@ -119,7 +119,7 @@
     // ── End-to-end AI playthroughs ───────────────────────────────────────
     // Apply a settings patch, generate a level, then run the physics loop
     // headlessly until the AI (player 1) finishes or we hit the frame cap.
-    const DEFAULTS = { speedLevel: 3, jumpLevel: 3, platforms: 3, gems: 5, spikes: 'normal', movingBlocks: false, movingSpeedLevel: 3 };
+    const DEFAULTS = { speedLevel: 3, jumpLevel: 3, platforms: 3, gems: 5, spikes: 'normal', movingBlocks: false, movingSpeedLevel: 3, movingSpikes: false };
     const presetPatch = (name, extra) => {
       const p = {};
       SETTING_KEYS.forEach(k => { p[k] = PRESETS[name][k]; });
@@ -140,6 +140,7 @@
       for (let f = 0; f < capFrames; f++) {
         animTick++;
         updatePlatforms();
+        updateMovingSpikes();
         players.forEach(updatePlayer);
         if (ai.dead && !wasDead) deaths++;
         wasDead = ai.dead;
@@ -166,6 +167,8 @@
       { label: 'spikes-normal', patch: { spikes: 'normal' } },
       { label: 'spikes-heavy',  patch: { spikes: 'heavy'  } },
       { label: 'spikes+moving', patch: { spikes: 'heavy', movingBlocks: true } },
+      { label: 'movingspikes',  patch: { spikes: 'normal', movingSpikes: true } },
+      { label: 'movspk+plat',   patch: { spikes: 'heavy', movingBlocks: true, movingSpikes: true } },
       { label: 'speed-1',       patch: { speedLevel: 1 } },
       { label: 'speed-5',       patch: { speedLevel: 5 } },
       { label: 'jump-1',        patch: { jumpLevel: 1 } },
@@ -214,7 +217,7 @@
       aiSegs.forEach((s, i) => log(`  seg${i} row${s.row} cols${s.minCol}-${s.maxCol}`));
       let pg = ai.onGround, pk = '', ring = [];
       for (let f = 0; f < capFrames; f++) {
-        animTick++; updatePlatforms(); players.forEach(updatePlayer);
+        animTick++; updatePlatforms(); updateMovingSpikes(); players.forEach(updatePlayer);
         const seg = getPlayerSegIdx(ai);
         const k = (ai.aiPath || []).join('>') + ':' + ai.aiMoveType;
         const ev = [];
@@ -247,6 +250,46 @@
       log(`\n=== MOVING PLATFORMS (${levels} hard levels) ===`);
       log(`levels with ≥1 platform: ${withPlat}/${levels}  total platforms: ${totalPlat}  ` +
           `embedded-in-solid: ${embedded}  bad-travel-range: ${badRange}`);
+    })();
+
+    // ── Moving-spike generation invariants ───────────────────────────────────
+    // Every committed patroller must have a valid travel range, overlap ≥1 AI hop
+    // (taggedEdges > 0 when present), and — the no-softlock guarantee — leave the flag
+    // and every gem reachable from the AI spawn using ONLY non-spiked edges.
+    (function movingSpikeProbe() {
+      const reachableNoSpike = (startIdx, endIdx) => {
+        if (startIdx < 0 || endIdx < 0) return false;
+        if (startIdx === endIdx) return true;
+        const seen = new Uint8Array(aiSegs.length); seen[startIdx] = 1;
+        const q = [startIdx];
+        for (let qi = 0; qi < q.length; qi++)
+          for (const e of aiAdj[q[qi]]) if (!e.spikeLane && !seen[e.idx]) { seen[e.idx] = 1; q.push(e.idx); }
+        return !!seen[endIdx];
+      };
+
+      let levels = 0, withSpk = 0, totalSpk = 0, badRange = 0, taggedEdges = 0, softlock = 0;
+      for (let i = 0; i < 200; i++) {
+        rng = mulberry32(seedFor('mvspk-probe', i));
+        aiOpponent = true;
+        settings = Object.assign({}, DEFAULTS, presetPatch('hard', { movingBlocks: true, movingSpikes: true }));
+        initGame();
+        levels++;
+        if (!movingSpikes.length) continue;
+        withSpk++; totalSpk += movingSpikes.length;
+        for (const s of movingSpikes)
+          if (!(s.minX < s.maxX && s.x >= s.minX && s.x + s.w <= s.maxX)) badRange++;
+        for (const list of aiAdj) for (const e of list) if (e.spikeLane) taggedEdges++;
+
+        // no-softlock: flag + gems reachable from spawn with spiked edges removed
+        const start = spawnSegIdx(players[1]);
+        const fSeg  = getTargetSegIdx(flagPos.col * TILE + TILE / 2, (flagPos.row - 1) * TILE);
+        let ok = reachableNoSpike(start, fSeg);
+        for (const g of gems) ok = ok && reachableNoSpike(start, getTargetSegIdx(g.x, g.y));
+        if (!ok) softlock++;
+      }
+      log(`\n=== MOVING SPIKES (${levels} hard levels) ===`);
+      log(`levels with ≥1 spike: ${withSpk}/${levels}  total spikes: ${totalSpk}  ` +
+          `tagged-edges: ${taggedEdges}  bad-travel-range: ${badRange}  SOFTLOCK(no-spike-route): ${softlock}`);
     })();
 
     log('DONE');

@@ -25,8 +25,16 @@ const JUMP_LEVELS   = [null,
   { gravity: 0.54, jump: -10.5 },   // 4 · higher
   { gravity: 0.53, jump: -11.0 },   // 5 · super jump
 ];
-const MOVING_SPEED_LEVELS = [null, 0.4, 0.9, 1.4, 1.9, 2.5];   // moving-platform speed
+const MOVING_SPEED_LEVELS = [null, 0.4, 0.9, 1.4, 1.9, 2.5];   // moving-platform AND moving-spike speed
 const PLAT_DENSITY_LEVELS = [null, 0.6, 0.8, 1.0, 1.25, 1.5];  // platform-count multiplier
+
+// ── Moving spikes ─────────────────────────────────────────────────────────────
+// Air-gap patrollers: a lethal spiked block that slides horizontally through the
+// empty lanes between platforms (reusing the moving-platform speed). Up to this many
+// are attempted per level; each is kept only if the level stays solvable with every
+// spike-threatened AI edge removed (so the AI always has a spike-free fallback route —
+// see buildMovingSpikes in levelgen.js). They share MOVING_SPEED_LEVELS for speed.
+const MOVING_SPIKE_COUNT = 2;
 
 // ── Spike density ───────────────────────────────────────────────────────────
 // How many spike hazards the level generator (levelgen.js placeSpikes) tries to
@@ -47,13 +55,13 @@ const SPIKE_LEVELS = {
 // hand-tweaks a slider. label/color drive the in-game difficulty badge.
 const PRESETS = {
   easy:   { label: 'Easy',   color: '#4d9',
-            speedLevel: 2, jumpLevel: 1, platforms: 2, gems: 5, spikes: 'none',   movingBlocks: true, movingSpeedLevel: 2 },
+            speedLevel: 2, jumpLevel: 1, platforms: 2, gems: 5, spikes: 'none',   movingBlocks: true, movingSpeedLevel: 2, movingSpikes: false },
   medium: { label: 'Medium', color: '#fa4',
-            speedLevel: 3, jumpLevel: 2, platforms: 3, gems: 5, spikes: 'normal', movingBlocks: true, movingSpeedLevel: 3 },
+            speedLevel: 3, jumpLevel: 2, platforms: 3, gems: 5, spikes: 'normal', movingBlocks: true, movingSpeedLevel: 3, movingSpikes: false },
   hard:   { label: 'Hard',   color: '#f54',
-            speedLevel: 4, jumpLevel: 4, platforms: 4, gems: 7, spikes: 'heavy',  movingBlocks: true, movingSpeedLevel: 4 },
+            speedLevel: 4, jumpLevel: 4, platforms: 4, gems: 7, spikes: 'heavy',  movingBlocks: true, movingSpeedLevel: 4, movingSpikes: true },
   custom: { label: 'Custom', color: '#c9f' },
 };
 
 // Keys that copy from a preset into `settings` (everything but label/color).
-const SETTING_KEYS = ['speedLevel', 'jumpLevel', 'platforms', 'gems', 'spikes', 'movingBlocks', 'movingSpeedLevel'];
+const SETTING_KEYS = ['speedLevel', 'jumpLevel', 'platforms', 'gems', 'spikes', 'movingBlocks', 'movingSpeedLevel', 'movingSpikes'];

@@ -4,12 +4,10 @@ function makePlayer(id) {
   const spawnY = 13 * TILE;
   const isAI   = id === 1 && aiOpponent;
   return {
-    // Both players draw a 26×30 body (drawW/drawH); the physics hitbox (w/h) is
-    // smaller so jumps clear with a little margin and feel less twitchy. The human
-    // uses 24×28 — only ~1px of visual overhang at walls, so no clipping look. The
-    // AI stays 22×26: its pathfinding graph is built against that size, so leave it.
-    id, w: isAI ? 22 : 24, h: isAI ? 26 : 28,
-    drawW: 26, drawH: 30,
+    // AI has a smaller physics hitbox (22×26) than its drawn body (26×30).
+    // drawW/drawH drive the visual; w/h drive all collision and AI logic.
+    id, w: isAI ? 22 : 26, h: isAI ? 26 : 30,
+    ...(isAI && { drawW: 26, drawH: 30 }),
     vx: 0, vy: 0, onGround: false,
     x: spawnX, y: spawnY,
     color:  COLORS[s.colorIdx],
@@ -48,6 +46,19 @@ function initGame() {
 
   tiles   = level.rows.map(r => r.split('').map(Number));
   flagPos = level.flagPos;
+
+  // Build the live moving-spike entities BEFORE the AI graph, so tagSpikedEdges marks
+  // the hops they threaten. tx/minTx/maxTx → pixels exactly as the generator validated.
+  movingSpikes = (level.spikeDefs || []).map(d => ({
+    x:    d.tx * TILE,
+    y:    d.ty * TILE,
+    w:    d.tw * TILE,
+    h:    TILE,
+    dx:   d.dx,
+    minX: d.minTx * TILE,
+    maxX: d.maxTx * TILE,
+  }));
+
   buildAIGraph();
 
   platforms = settings.movingBlocks ? level.platDefs.map(d => ({
@@ -77,11 +88,11 @@ function initGame() {
 
 // ── Endless mode ──────────────────────────────────────────────────────────────
 // An endless player is always human (no AI), spawned at a world point on a backbone
-// platform; same 24×28 hitbox / 26×30 visual as a classic human player.
+// platform; w/h match a normal player (no AI hitbox shrink).
 function makeEndlessPlayer(id, sx, sy) {
   const s = setup[id];
   return {
-    id, w: 24, h: 28, drawW: 26, drawH: 30,
+    id, w: 26, h: 30,
     vx: 0, vy: 0, onGround: false,
     x: sx, y: sy,
     color: COLORS[s.colorIdx], hatIdx: s.hatIdx, name: s.name,
@@ -175,6 +186,7 @@ function loop() {
   }
 
   updatePlatforms();
+  updateMovingSpikes();
   players.forEach(updatePlayer);
 
   document.getElementById('timer-display').textContent =
@@ -184,6 +196,7 @@ function loop() {
   drawBG();
   drawTiles();
   drawPlatforms();
+  drawMovingSpikes();
   drawFlag();
   drawGems();
   players.forEach(drawPlayer);

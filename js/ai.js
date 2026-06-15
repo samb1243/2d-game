@@ -14,6 +14,56 @@ function buildAIGraph() {
   const g = buildSegGraph(tiles, M);
   aiSegs = g.segs;
   aiAdj  = g.adj;
+  tagSpikedEdges(aiSegs, aiAdj, movingSpikes, M);  // mark hops whose flight crosses a patroller's lane
+}
+
+// ── Moving-spike edge tagging ────────────────────────────────────────────────
+// A moving spike (levelgen buildMovingSpikes) patrols an air-gap lane. The AI graph
+// is static and timeless, so instead of deleting the hops that cross such a lane we
+// KEEP them and mark them: the executor (aiDriveHop) then waits for the spike to slide
+// clear before taking off (spikeWindowClear), and the generator proves the level stays
+// solvable even with every marked edge removed — so a hopeless wait can always ban the
+// edge and reroute. `spikes` are runtime-style boxes {x,y,w,h,dx,minX,maxX}; the
+// generator passes equivalent temp boxes to validate a candidate placement.
+function tagSpikedEdges(segs, adj, spikes, M) {
+  for (let i = 0; i < segs.length; i++)              // clear any stale tags first
+    for (const e of adj[i]) { delete e.spikeLane; delete e.spikeCorr; }
+  if (!spikes || !spikes.length) return;
+
+  // Each spike's swept rectangle in tile space (left edge over [minX, maxX-w]).
+  const sweeps = spikes.map(s => ({
+    rowTop: Math.floor(s.y / TILE),
+    rowBot: Math.floor((s.y + s.h - 1) / TILE),
+    minCol: Math.floor(s.minX / TILE),
+    maxCol: Math.floor((s.maxX - 1) / TILE),
+  }));
+
+  for (let i = 0; i < segs.length; i++) {
+    const a = segs[i];
+    for (const e of adj[i]) {
+      const b = segs[e.idx];
+      // Columns the body crosses during this hop (the gap, or the overlap for a
+      // straight up/down hop).
+      let cLo, cHi;
+      if      (b.minCol > a.maxCol) { cLo = a.maxCol; cHi = b.minCol; }
+      else if (b.maxCol < a.minCol) { cLo = b.maxCol; cHi = a.minCol; }
+      else { cLo = Math.max(a.minCol, b.minCol); cHi = Math.min(a.maxCol, b.maxCol); }
+      // Vertical band the body occupies (surface rows minus the ~2-tile arc rise).
+      const rLo = Math.min(a.row, b.row) - 3;
+      const rHi = Math.max(a.row, b.row);
+
+      const lane = [];
+      sweeps.forEach((sw, si) => {
+        if (sw.rowBot < rLo || sw.rowTop > rHi) return;          // wrong height band
+        if (sw.maxCol < cLo - 1 || sw.minCol > cHi + 1) return;  // not over the crossing
+        lane.push(si);
+      });
+      if (lane.length) {
+        e.spikeLane = lane;
+        e.spikeCorr = [cLo * TILE, (cHi + 1) * TILE];   // crossing corridor in world-x
+      }
+    }
+  }
 }
 
 // Pure walkable-surface graph for a tile grid + jump model — the single source
@@ -212,6 +262,7 @@ function aiInit(p) {
   p.aiLastProgressTick = 0;
   p.aiLastGems = 0;
   p.aiLandX = null; p.aiFaceX = null; p.aiJumpDir = 0; p.aiTargetTopY = null;
+  p.aiSpikeWaitStart = null;   // tick the current spiked-hop wait began (null = not waiting)
 }
 
 function aiCeilingBlocked(p) {
@@ -302,12 +353,63 @@ function aiDriveToward(p, cfg, tx, ty, allowJump) {
   }
 }
 
+// True if every patroller threatening this hop is predicted clear of the crossing
+// corridor for the whole flight — i.e. it's safe to take off NOW. Each spike is
+// simulated F frames ahead with the SAME reversal rule as updateMovingSpikes, and we
+// require its swept x-interval to stay off the corridor (plus a body-width margin).
+function spikeWindowClear(p, edge, cfg) {
+  if (!edge || !edge.spikeLane || !edge.spikeLane.length) return true;
+  const corrL = edge.spikeCorr[0], corrR = edge.spikeCorr[1];
+  const margin = p.w + 6;
+  const F = Math.max(30, Math.min(90, Math.ceil((corrR - corrL) / cfg.speed) + 34));
+  for (const idx of edge.spikeLane) {
+    const s = movingSpikes[idx];
+    if (!s) continue;
+    let x = s.x, dx = s.dx, lo = x, hi = x + s.w;
+    for (let f = 0; f < F; f++) {
+      const prev = x;
+      x += dx;
+      if (x <= s.minX || x + s.w >= s.maxX) { x = prev; dx = -dx; }
+      if (x < lo)        lo = x;
+      if (x + s.w > hi)  hi = x + s.w;
+    }
+    if (hi >= corrL - margin && lo <= corrR + margin) return false;   // sweeps into corridor
+  }
+  return true;
+}
+
 // Execute one grounded hop from segment A to segment B.
 function aiDriveHop(p, cfg, A, B, moveType, edge) {
   const cx  = p.x + p.w / 2;
   const bCx = (B.minCol + B.maxCol + 1) / 2 * TILE;
   p.aiWaypoint = { x: bCx, y: (B.row - 1) * TILE };
   p.aiLandX = Math.max((B.minCol + 0.4) * TILE, Math.min((B.maxCol + 0.6) * TILE, bCx));
+
+  // ── Moving-spike timing gate ──────────────────────────────────────────────
+  // If this hop's flight crosses a patrolling spike's lane, hold on A near the
+  // take-off edge until the spike is predicted clear, then fall through and go.
+  if (edge && edge.spikeLane && edge.spikeLane.length && !spikeWindowClear(p, edge, cfg)) {
+    const dir     = B.minCol > A.maxCol ? 1 : B.maxCol < A.minCol ? -1 : 0;
+    const waitCol = dir > 0 ? A.maxCol : dir < 0 ? A.minCol : (A.minCol + A.maxCol) / 2;
+    const waitX   = (waitCol + 0.5) * TILE;
+    p.aiWaypoint  = { x: waitX, y: (A.row - 1) * TILE };
+    p.aiFaceX = null; p.aiTargetTopY = null; p.aiJumpDir = 0;
+    const dxw = waitX - cx;
+    p.vx += ((Math.abs(dxw) < 6 ? 0 : Math.sign(dxw) * cfg.speed) - p.vx) * 0.6;
+    // Keep the hop alive while we legitimately wait, but cap total waiting (≈2 round
+    // trips of the slowest threatening spike) so a hopeless lane times out → bans the
+    // edge → reroutes onto the spike-free fallback the generator guaranteed exists.
+    if (p.aiSpikeWaitStart == null) p.aiSpikeWaitStart = animTick;
+    let cap = 240;
+    for (const idx of edge.spikeLane) {
+      const s = movingSpikes[idx]; if (!s) continue;
+      const travel = Math.max(1, s.maxX - s.minX - s.w);
+      cap = Math.max(cap, Math.ceil(4 * travel / Math.max(0.1, Math.abs(s.dx))));
+    }
+    if (animTick - p.aiSpikeWaitStart < cap) p.aiHopDeadline = animTick + 30;
+    return;
+  }
+  p.aiSpikeWaitStart = null;
 
   if (moveType === 'walk') {
     p.aiFaceX = null; p.aiTargetTopY = null; p.aiJumpDir = 0;
@@ -456,6 +558,7 @@ function planFromSeg(p, cfg, curSeg) {
 
   p.aiHopFrom = curSeg;
   p.aiHopTo   = p.aiPath.length > 1 ? p.aiPath[1] : -1;
+  p.aiSpikeWaitStart = null;   // fresh hop → reset any prior spike-wait timer
   p.aiMoveType = p.aiHopTo >= 0
     ? ((aiAdj[curSeg].find(e => e.idx === p.aiHopTo) || {}).moveType || 'walk')
     : 'walk';

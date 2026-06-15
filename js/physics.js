@@ -64,6 +64,18 @@ function checkSpikes(p) {
       if (tileAt(c, r) === 2 && feet > r * TILE + SPIKE_TIP) { killPlayer(p); return; }
 }
 
+// Moving spikes are lethal on any overlap of the player's hitbox with the spike box
+// (no SPIKE_TIP grace — a patroller you ran into has clearly hit you). Checked after
+// the axis resolves, like checkSpikes. Applies to both players; the AI dies and
+// respawns, which the timing gate (aiDriveHop) is built to make rare.
+function checkMovingSpikes(p) {
+  if (p.dead) return;
+  for (const s of movingSpikes)
+    if (p.x + p.w > s.x && p.x < s.x + s.w && p.y + p.h > s.y && p.y < s.y + s.h) {
+      killPlayer(p); return;
+    }
+}
+
 function resolvePlatforms(p) {
   p.onPlatform = null;
   for (const pl of platforms) {
@@ -127,6 +139,7 @@ function updatePlayer(p) {
   p.x += p.vx; resolveX(p);
   p.y += p.vy; resolveY(p);
   checkSpikes(p);
+  checkMovingSpikes(p);
   resolvePlatforms(p);
 
   // Endless: no edge clamp (infinite). Grab nearby gems and check the goal flag.
@@ -172,5 +185,16 @@ function updatePlatforms() {
       pl.x = prevX;
       pl.dx *= -1;
     }
+  }
+}
+
+// Slide each patroller along its lane, bouncing at the travel bounds. The reversal
+// rule is byte-for-byte the one the AI's spikeWindowClear simulates forward, so the
+// AI's timing prediction always matches what the spike actually does.
+function updateMovingSpikes() {
+  for (const s of movingSpikes) {
+    const prevX = s.x;
+    s.x += s.dx;
+    if (s.x <= s.minX || s.x + s.w >= s.maxX) { s.x = prevX; s.dx = -s.dx; }
   }
 }
