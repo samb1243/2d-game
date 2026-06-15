@@ -36,15 +36,21 @@ const eRandInt = (seed, a, b, lo, hi) => lo + (eHash(seed, a, b) % (hi - lo + 1)
 // Salts so width / jitter / gem draws are independent streams off the same seed.
 const SALT_W = 0x9e3779b1, SALT_GEM = 0x85ebca77;
 
-// Turn the active jump model into lattice spacing that keeps every backbone edge
-// within reach. WMIN..WMAX is the platform width range; gaps stay in [1, sameGap]
-// (≥1 so platforms never merge into a solid tier, ≤sameGap so the hop is reachable).
+// Turn the active jump model into lattice spacing. WMIN..WMAX is the platform width
+// range, sized from the reach-tight pitch so a 1-col gap always remains.
+//
+// The slot pitch GX is then spread a little WIDER than that reach-tight pitch to make
+// the field feel more open (fewer platforms per tier). This is safe: connectivity rides
+// the vertical staircase, not same-tier hops — DPHASE/upGap (the climb) are unchanged,
+// and adjacent column-bands still merge into continuous ground at every phase-extreme
+// tier, so the lattice stays a single connected component for any pitch.
 function endlessParams(M) {
   const sameGap = Math.max(1, M.maxGapTilesForRise(0));   // same-tier reach (cols)
   const upGap   = Math.max(0, M.maxGapTilesForRise(2));   // one-tier-up reach (cols)
   const WMIN = 2;
-  const GX   = WMIN + sameGap;                            // columns between slots, per tier
-  const WMAX = Math.min(5, GX - 1);                       // keep at least a 1-col gap
+  const coreGX = WMIN + sameGap;                          // reach-tight pitch (width cap)
+  const WMAX = Math.min(5, coreGX - 1);                   // keep at least a 1-col gap
+  const GX   = coreGX + Math.max(1, Math.round(sameGap * 0.34)); // wider, more open pitch
   const DPHASE = GX >= 3 ? 2 : 1;                         // per-tier sideways stagger
   return { sameGap, upGap, WMIN, WMAX, GX, DPHASE };
 }

@@ -38,7 +38,10 @@
       "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page loadcheck.html)",
       "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\))",
       "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\) | Select-Object -First 80)",
-      "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\) | Select-Object -First 70)"
+      "PowerShell($out = & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\"; $idx = \\($out | Select-String 'ETRACE'\\).LineNumber; $out | Select-Object -Skip \\($idx-1\\) | Select-Object -First 70)",
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endlesscheck.html\")",
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endless.html\")",
+      "PowerShell(& \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endless.html\"; & \"C:\\\\Users\\\\kishi\\\\OneDrive\\\\Documents\\\\GitHub\\\\Sithuli-game\\\\test\\\\run.ps1\" -page \"endlesscheck.html\")"
     ]
   }
 }
